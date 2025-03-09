@@ -57,7 +57,7 @@ provider "helm" {
       google_container_cluster.primary.master_auth.0.cluster_ca_certificate
     )
     token                  = data.google_client_config.default.access_token
-    # Removed 'load_config_file = false' as it's no longer supported
+    # Removed load_config_file = false (not supported in newer provider versions)
   }
 }
 
@@ -104,7 +104,7 @@ resource "google_kms_key_ring" "vault_ring" {
 
 resource "google_kms_crypto_key" "vault_key" {
   name            = var.kms_crypto_key
-  # REPLACE self_link WITH id
+  # Important: use .id instead of .self_link in new Google provider versions
   key_ring        = google_kms_key_ring.vault_ring.id
   rotation_period = "7776000s" # 90 days
   depends_on      = [google_kms_key_ring.vault_ring]
@@ -138,13 +138,11 @@ resource "helm_release" "vault" {
   version          = "0.23.0"
   create_namespace = false
 
-  # We'll store additional Helm values in vault-values.yaml
-  # to keep the config for auto-unseal & injector.
   values = [
     file("${path.module}/vault-values.yaml")
   ]
 
-  # Pass in GCP auto-unseal values
+  # GCP auto-unseal
   set {
     name  = "server.config.seal.gcpckms.project"
     value = var.gcp_project
@@ -166,7 +164,7 @@ resource "helm_release" "vault" {
     google_container_node_pool.primary_nodes,
     kubernetes_secret.vault_gcp_key
   ]
-  timeout = 600
+  timeout = 300
   wait    = true
 }
 
@@ -179,7 +177,6 @@ resource "random_password" "vault_root_token" {
 }
 
 data "google_sql_database_instance" "existing_db" {
-  # The name of your Cloud SQL instance
   name    = var.cloud_sql_instance_name
   project = var.gcp_project
 }
@@ -247,7 +244,8 @@ DB_PASS="${var.db_root_password}"
 
 vault write database/config/my-sql-db \
   plugin_name="mysql-legacy-database-plugin" \
-  connection_url="{{username}}:{{password}}@tcp(${INSTANCE_CONN_NAME})/" \
+  # Escape the braces to avoid Terraform thinking this is interpolation
+  connection_url="\\{\\{username}}:\\{\\{password}}@tcp(${INSTANCE_CONN_NAME})/" \
   username="$DB_USER" \
   password="$DB_PASS"
 
