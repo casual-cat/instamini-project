@@ -10,6 +10,9 @@ on:
 jobs:
   build-test-deploy:
     runs-on: ubuntu-latest
+    env:
+      # Set the env variable at the job level so all steps see it.
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
 
     steps:
       # 1) Check out the code
@@ -42,10 +45,8 @@ jobs:
           terraform -version
 
           # Google Cloud CLI
-          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
-            | sudo tee /etc/apt/sources.list.d/cloud-sdk.list
-          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-            | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
+          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee /etc/apt/sources.list.d/cloud-sdk.list
+          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
           sudo apt-get update && sudo apt-get install -y google-cloud-cli
 
           # kubectl
@@ -73,9 +74,9 @@ jobs:
       # 4) GCP Auth
       - name: GCP Auth
         run: |
-          echo '${{ secrets.GCP_SA_KEY }}' | base64 --decode > /tmp/gcp-key.json
-          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json
-          gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
+          # Write the key to a file in the workspace so it persists across steps.
+          echo '${{ secrets.GCP_SA_KEY }}' | base64 --decode > $GITHUB_WORKSPACE/gcp-key.json
+          gcloud auth activate-service-account --key-file=$GITHUB_WORKSPACE/gcp-key.json
           gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
 
       # 5) Terraform Import Keyring (optional)
