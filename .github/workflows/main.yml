@@ -97,7 +97,6 @@ jobs:
           terraform apply -auto-approve
 
       # 7) Create Kubernetes MySQL Secret
-      #    So that your app can use static env vars from a K8s Secret
       - name: Create Kubernetes MySQL Secret
         run: |
           gcloud container clusters get-credentials vault-ha-cluster \

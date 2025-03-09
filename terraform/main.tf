@@ -28,18 +28,19 @@ terraform {
     }
   }
 
-  # We'll store state locally for simplicity, but ideally use a remote backend.
+  # We'll store state locally for simplicity (in terraform.tfstate),
+  # but ideally you might use a remote backend in production.
   backend "local" {
     path = "terraform.tfstate"
   }
 }
 
 provider "google" {
-  project = var.gcp_project
-  region  = var.gcp_region
-  zone    = var.gcp_zone
-  # We'll set credentials from the environment or GitHub Action
-  # (the file /tmp/gcp-key.json).
+  project     = var.gcp_project
+  region      = var.gcp_region
+  zone        = var.gcp_zone
+  # Tells Terraform to load the credentials from /tmp/gcp-key.json
+  credentials = file("/tmp/gcp-key.json")
 }
 
 provider "kubernetes" {
@@ -57,7 +58,7 @@ provider "helm" {
       google_container_cluster.primary.master_auth.0.cluster_ca_certificate
     )
     token                  = data.google_client_config.default.access_token
-    # Removed load_config_file = false (not supported in newer provider versions)
+    # load_config_file removed (deprecated in newer provider versions)
   }
 }
 
@@ -104,7 +105,6 @@ resource "google_kms_key_ring" "vault_ring" {
 
 resource "google_kms_crypto_key" "vault_key" {
   name            = var.kms_crypto_key
-  # Use .id, not .self_link, in newer Google provider versions
   key_ring        = google_kms_key_ring.vault_ring.id
   rotation_period = "7776000s" # 90 days
   depends_on      = [google_kms_key_ring.vault_ring]
@@ -138,12 +138,10 @@ resource "helm_release" "vault" {
   version          = "0.23.0"
   create_namespace = false
 
-  # We'll store additional Helm values in vault-values.yaml
   values = [
     file("${path.module}/vault-values.yaml")
   ]
 
-  # Pass in GCP auto-unseal values
   set {
     name  = "server.config.seal.gcpckms.project"
     value = var.gcp_project
@@ -242,8 +240,7 @@ INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_nam
 DB_USER="root"
 DB_PASS="${var.db_root_password}"
 
-# Notice: We put {{username}} and {{password}} in single quotes so that
-# Terraform doesn't parse them as interpolation.
+# Single-quoted {{username}} so Terraform won't parse it
 vault write database/config/my-sql-db \\
   plugin_name="mysql-legacy-database-plugin" \\
   connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME"')/' \\
