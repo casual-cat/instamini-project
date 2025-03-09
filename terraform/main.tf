@@ -104,7 +104,7 @@ resource "google_kms_key_ring" "vault_ring" {
 
 resource "google_kms_crypto_key" "vault_key" {
   name            = var.kms_crypto_key
-  # Important: use .id instead of .self_link in new Google provider versions
+  # Use .id, not .self_link, in newer Google provider versions
   key_ring        = google_kms_key_ring.vault_ring.id
   rotation_period = "7776000s" # 90 days
   depends_on      = [google_kms_key_ring.vault_ring]
@@ -138,11 +138,12 @@ resource "helm_release" "vault" {
   version          = "0.23.0"
   create_namespace = false
 
+  # We'll store additional Helm values in vault-values.yaml
   values = [
     file("${path.module}/vault-values.yaml")
   ]
 
-  # GCP auto-unseal
+  # Pass in GCP auto-unseal values
   set {
     name  = "server.config.seal.gcpckms.project"
     value = var.gcp_project
@@ -164,7 +165,7 @@ resource "helm_release" "vault" {
     google_container_node_pool.primary_nodes,
     kubernetes_secret.vault_gcp_key
   ]
-  timeout = 300
+  timeout = 600
   wait    = true
 }
 
@@ -177,6 +178,7 @@ resource "random_password" "vault_root_token" {
 }
 
 data "google_sql_database_instance" "existing_db" {
+  # The name of your Cloud SQL instance
   name    = var.cloud_sql_instance_name
   project = var.gcp_project
 }
@@ -185,7 +187,7 @@ resource "null_resource" "vault_init_and_config" {
   depends_on = [helm_release.vault]
 
   provisioner "local-exec" {
-    command = <<EOT
+    command = <<-EOT
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -215,11 +217,9 @@ else
   UNSEAL_KEY=$(echo "$INIT_OUT" | jq -r .unseal_keys_b64[0])
   ROOT_TOKEN=$(echo "$INIT_OUT" | jq -r .root_token)
 
-  # Vault auto-unseals with KMS, but let's do a manual unseal once
   vault operator unseal "$UNSEAL_KEY"
   echo "Vault unsealed with share."
 
-  # Create a new stable root token
   vault login "$ROOT_TOKEN"
   vault token create -id="${random_password.vault_root_token.result}" -policy="root" -ttl=87600h
   vault login "${random_password.vault_root_token.result}"
@@ -228,31 +228,32 @@ fi
 echo "Enabling Kubernetes auth method..."
 vault auth enable kubernetes || true
 
-vault write auth/kubernetes/config \
-  kubernetes_host="https://kubernetes.default.svc.cluster.local:443" \
-  token_reviewer_jwt="$(cat /run/secrets/kubernetes.io/serviceaccount/token)" \
+vault write auth/kubernetes/config \\
+  kubernetes_host="https://kubernetes.default.svc.cluster.local:443" \\
+  token_reviewer_jwt="$(cat /run/secrets/kubernetes.io/serviceaccount/token)" \\
   kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 
 echo "Enabling database secrets engine..."
 vault secrets enable database || true
 
-INSTANCE_CONN_NAME=$(gcloud sql instances describe ${var.cloud_sql_instance_name} \
-  --project ${var.gcp_project} --format 'value(connectionName)')
+# Grab the instance connection name from GCloud
+INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_name}" --project "${var.gcp_project}" --format 'value(connectionName)')
 
 DB_USER="root"
 DB_PASS="${var.db_root_password}"
 
-vault write database/config/my-sql-db \
-  plugin_name="mysql-legacy-database-plugin" \
-  # Escape the braces to avoid Terraform thinking this is interpolation
-  connection_url="\\{\\{username}}:\\{\\{password}}@tcp(${INSTANCE_CONN_NAME})/" \
-  username="$DB_USER" \
+# Notice: We put {{username}} and {{password}} in single quotes so that
+# Terraform doesn't parse them as interpolation.
+vault write database/config/my-sql-db \\
+  plugin_name="mysql-legacy-database-plugin" \\
+  connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME"')/' \\
+  username="$DB_USER" \\
   password="$DB_PASS"
 
-vault write database/roles/my-app-role \
-  db_name="my-sql-db" \
-  creation_statements="CREATE USER '{{name}}'@'%' IDENTIFIED BY '{{password}}'; GRANT ALL PRIVILEGES ON *.* TO '{{name}}'@'%';" \
-  default_ttl="1h" \
+vault write database/roles/my-app-role \\
+  db_name="my-sql-db" \\
+  creation_statements="CREATE USER '{{name}}'@'%' IDENTIFIED BY '{{password}}'; GRANT ALL PRIVILEGES ON *.* TO '{{name}}'@'%';" \\
+  default_ttl="1h" \\
   max_ttl="24h"
 
 kill $PF_PID || true
