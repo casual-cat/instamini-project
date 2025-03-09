@@ -37,7 +37,7 @@ provider "google" {
   project = var.gcp_project
   region  = var.gcp_region
   zone    = var.gcp_zone
-  # Note: Credentials are provided via the GOOGLE_APPLICATION_CREDENTIALS env variable.
+  # Credentials are provided via the GOOGLE_APPLICATION_CREDENTIALS environment variable.
 }
 
 provider "kubernetes" {
@@ -171,82 +171,84 @@ resource "null_resource" "vault_init_and_config" {
       #!/usr/bin/env bash
       set -euo pipefail
 
-      echo "Waiting for vault-0 pod to be Running..."
+      echo "Waiting for Vault LoadBalancer external IP..."
+      EXTERNAL_IP=""
       for i in {1..30}; do
-        PHASE=$(kubectl get pod vault-0 -n vault -o jsonpath='{.status.phase}' || true)
-        if [ "$PHASE" = "Running" ]; then
-          echo "vault-0 is running!"
+        EXTERNAL_IP=$(kubectl get svc vault -n vault -o jsonpath="{.status.loadBalancer.ingress[0].ip}" || true)
+        if [ -n "$EXTERNAL_IP" ]; then
+          echo "Vault is available at external IP: $EXTERNAL_IP"
           break
         else
-          echo "vault-0 not ready, found phase=$PHASE, sleeping 10s"
+          echo "External IP not assigned yet, sleeping 10s..."
           sleep 10
         fi
       done
 
-      echo "Port-forwarding to Vault pod..."
-      kubectl port-forward vault-0 8200:8200 -n vault &
-      PF_PID=$!
-      sleep 10
+      if [ -z "$EXTERNAL_IP" ]; then
+        echo "Vault external IP not assigned, aborting"
+        exit 1
+      fi
 
-      echo "Waiting for Vault to become available on localhost:8200..."
+      export VAULT_ADDR="http://$EXTERNAL_IP:8200"
+      echo "Using VAULT_ADDR=$VAULT_ADDR"
+
+      echo "Waiting for Vault to become available at $VAULT_ADDR..."
       RETRY=0
-      until curl -sk https://127.0.0.1:8200/v1/sys/health; do
+      until curl -s $VAULT_ADDR/v1/sys/health; do
         echo "Vault not available, retrying in 5 seconds..."
         sleep 5
         RETRY=$((RETRY+1))
         if [ $RETRY -ge 6 ]; then
           echo "Vault did not become available, aborting"
-          kill $PF_PID || true
           exit 1
         fi
       done
 
       echo "Initializing Vault if not already initialized..."
-      if vault status 2>/dev/null | grep -q 'Initialized.*true'; then
+      if vault status -address=$VAULT_ADDR 2>/dev/null | grep -q 'Initialized.*true'; then
         echo "Vault already initialized, skipping operator init."
       else
         echo "Initializing Vault..."
-        INIT_OUT=$(vault operator init -key-shares=1 -key-threshold=1 -format=json)
+        INIT_OUT=$(vault operator init -key-shares=1 -key-threshold=1 -format=json -address=$VAULT_ADDR)
         UNSEAL_KEY=$(echo "$INIT_OUT" | jq -r .unseal_keys_b64[0])
         ROOT_TOKEN=$(echo "$INIT_OUT" | jq -r .root_token)
 
-        vault operator unseal "$UNSEAL_KEY"
-        echo "Vault unsealed with share."
+        vault operator unseal -address=$VAULT_ADDR "$UNSEAL_KEY"
+        echo "Vault unsealed."
 
-        vault login "$ROOT_TOKEN"
-        vault token create -id="${random_password.vault_root_token.result}" -policy="root" -ttl=87600h
-        vault login "${random_password.vault_root_token.result}"
+        vault login -address=$VAULT_ADDR "$ROOT_TOKEN"
+        vault token create -id="${random_password.vault_root_token.result}" -policy="root" -ttl=87600h -address=$VAULT_ADDR
+        vault login -address=$VAULT_ADDR "${random_password.vault_root_token.result}"
       fi
 
       echo "Enabling Kubernetes auth method..."
-      vault auth enable kubernetes || true
+      vault auth enable -address=$VAULT_ADDR kubernetes || true
 
-      vault write auth/kubernetes/config \\
+      vault write -address=$VAULT_ADDR auth/kubernetes/config \\
         kubernetes_host="https://kubernetes.default.svc.cluster.local:443" \\
         token_reviewer_jwt="$(cat /run/secrets/kubernetes.io/serviceaccount/token)" \\
         kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 
       echo "Enabling database secrets engine..."
-      vault secrets enable database || true
+      vault secrets enable -address=$VAULT_ADDR database || true
 
       echo "Configuring database secrets engine..."
       INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_name}" --project "${var.gcp_project}" --format 'value(connectionName)')
       DB_USER="root"
       DB_PASS="${var.db_root_password}"
-      vault write database/config/my-sql-db \\
+      vault write -address=$VAULT_ADDR database/config/my-sql-db \\
         plugin_name="mysql-legacy-database-plugin" \\
         connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME"')/' \\
         username="$DB_USER" \\
         password="$DB_PASS"
 
-      vault write database/roles/my-app-role \\
+      vault write -address=$VAULT_ADDR database/roles/my-app-role \\
         db_name="my-sql-db" \\
         creation_statements="CREATE USER '{{name}}'@'%' IDENTIFIED BY '{{password}}'; GRANT ALL PRIVILEGES ON *.* TO '{{name}}'@'%';" \\
         default_ttl="1h" \\
         max_ttl="24h"
 
-      kill $PF_PID || true
-      echo "Vault DB secrets engine configured!"
+      echo "Vault auto-initialization complete."
     EOF
   }
 }

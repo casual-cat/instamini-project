@@ -1,4 +1,3 @@
-# vault-values.yaml
 server:
   config: |
     ui = true
@@ -15,7 +14,8 @@ server:
       key_ring    = "vault-ha-keyring"
       crypto_key  = "vault-auto-unseal"
     }
-  # We'll override those "CHANGE_ME_*" from Terraform
+  service:
+    type: LoadBalancer
   extraEnvironmentVars:
     GOOGLE_APPLICATION_CREDENTIALS: "/etc/vault/key.json"
   volumes:
@@ -26,7 +26,5 @@ server:
     - name: gcp-key
       mountPath: /etc/vault
       readOnly: true
-
-  # Turn on the Vault Injector for sidecars
   injector:
     enabled: true
