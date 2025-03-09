@@ -34,26 +34,27 @@ terraform {
 }
 
 provider "google" {
-  project     = var.gcp_project
-  region      = var.gcp_region
-  zone        = var.gcp_zone
+  project = var.gcp_project
+  region  = var.gcp_region
+  zone    = var.gcp_zone
+  # Note: Credentials are provided via the GOOGLE_APPLICATION_CREDENTIALS env variable.
 }
 
 provider "kubernetes" {
-  host                   = "https://${google_container_cluster.primary.endpoint}"
+  host = "https://${google_container_cluster.primary.endpoint}"
   cluster_ca_certificate = base64decode(
     google_container_cluster.primary.master_auth.0.cluster_ca_certificate
   )
-  token                  = data.google_client_config.default.access_token
+  token = data.google_client_config.default.access_token
 }
 
 provider "helm" {
   kubernetes {
-    host                   = "https://${google_container_cluster.primary.endpoint}"
+    host = "https://${google_container_cluster.primary.endpoint}"
     cluster_ca_certificate = base64decode(
       google_container_cluster.primary.master_auth.0.cluster_ca_certificate
     )
-    token                  = data.google_client_config.default.access_token
+    token = data.google_client_config.default.access_token
   }
 }
 
@@ -105,7 +106,7 @@ resource "google_kms_key_ring" "vault_ring" {
 resource "google_kms_crypto_key" "vault_key" {
   name            = var.kms_crypto_key
   key_ring        = google_kms_key_ring.vault_ring.id
-  rotation_period = "7776000s" # 90 days
+  rotation_period = "7776000s"  # 90 days
   depends_on      = [google_kms_key_ring.vault_ring]
 }
 
@@ -149,7 +150,7 @@ resource "helm_release" "vault" {
 }
 
 ##################################
-# 4) Auto-Init Vault & DB Secrets
+# 4) Auto-Initialize Vault & Configure DB Secrets
 ##################################
 resource "random_password" "vault_root_token" {
   length  = 32
@@ -166,7 +167,7 @@ resource "null_resource" "vault_init_and_config" {
 
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
-    command = <<-EOT
+    command = <<-EOF
       #!/usr/bin/env bash
       set -euo pipefail
 
@@ -246,7 +247,7 @@ resource "null_resource" "vault_init_and_config" {
 
       kill $PF_PID || true
       echo "Vault DB secrets engine configured!"
-    EOT
+    EOF
   }
 }
 
