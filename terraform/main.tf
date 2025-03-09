@@ -98,7 +98,7 @@ resource "google_container_node_pool" "primary_nodes" {
 # 2) Create KMS Key Ring & Key for Vault Auto-Unseal
 ##################################
 resource "google_kms_key_ring" "vault_ring" {
-  name     = "var.kms_key_ring"
+  name     = var.kms_key_ring
   project  = var.gcp_project
   location = var.gcp_region
 }
