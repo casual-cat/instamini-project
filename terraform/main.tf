@@ -48,7 +48,6 @@ provider "kubernetes" {
     google_container_cluster.primary.master_auth.0.cluster_ca_certificate
   )
   token                  = data.google_client_config.default.access_token
-  load_config_file       = false
 }
 
 provider "helm" {
@@ -58,7 +57,7 @@ provider "helm" {
       google_container_cluster.primary.master_auth.0.cluster_ca_certificate
     )
     token                  = data.google_client_config.default.access_token
-    load_config_file       = false
+    # Removed 'load_config_file = false' as it's no longer supported
   }
 }
 
@@ -105,7 +104,8 @@ resource "google_kms_key_ring" "vault_ring" {
 
 resource "google_kms_crypto_key" "vault_key" {
   name            = var.kms_crypto_key
-  key_ring        = google_kms_key_ring.vault_ring.self_link
+  # REPLACE self_link WITH id
+  key_ring        = google_kms_key_ring.vault_ring.id
   rotation_period = "7776000s" # 90 days
   depends_on      = [google_kms_key_ring.vault_ring]
 }
