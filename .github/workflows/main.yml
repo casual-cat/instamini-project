@@ -35,7 +35,9 @@ jobs:
           curl -sSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o terraform.zip
           rm -rf tfbin
           unzip -o terraform.zip -d tfbin
-          sudo mv terraform /usr/local/bin/terraform
+          sudo mv tfbin/terraform /usr/local/bin/terraform
+          sudo chmod +x /usr/local/bin/terraform
+          export PATH="/usr/local/bin:$PATH"
           rm -rf tfbin terraform.zip
           terraform -version
 
