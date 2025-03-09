@@ -10,10 +10,10 @@ server:
       path = "/vault/data"
     }
     seal "gcpckms" {
-      project     = "instamini-auto"
+      project     = "instsmini-auto"
       region      = "us-central1"
-      key_ring    = "vault-ha-keyring-auto"
-      crypto_key  = "vault-auto-unseal-instamini"
+      key_ring    = "vault-ha-keyring"
+      crypto_key  = "vault-auto-unseal"
     }
   # We'll override those "CHANGE_ME_*" from Terraform
   extraEnvironmentVars:

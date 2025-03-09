@@ -21,3 +21,4 @@ pip-delete-this-directory.txt
 *.log
 bad_words.txt
 docker-compose.yml
+.gitignore

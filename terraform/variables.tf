@@ -35,5 +35,6 @@ variable "cloud_sql_instance_name" {
 
 variable "db_root_password" {
   type        = string
-  description = "q1w2e3r4t5"
+  description = "Database root password"
+  sensitive   = true
 }

@@ -42,10 +42,8 @@ jobs:
           terraform -version
 
           # Google Cloud CLI
-          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
-            | sudo tee /etc/apt/sources.list.d/cloud-sdk.list
-          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-            | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
+          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee /etc/apt/sources.list.d/cloud-sdk.list
+          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
           sudo apt-get update && sudo apt-get install -y google-cloud-cli
 
           # kubectl
@@ -56,6 +54,15 @@ jobs:
           curl -sSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o helm.tar.gz
           tar xvf helm.tar.gz
           sudo mv linux-amd64/helm /usr/local/bin/helm
+          rm -rf helm.tar.gz linux-amd64
+
+          # Vault CLI
+          VAULT_VERSION="1.14.2"
+          curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" -o vault.zip
+          unzip vault.zip
+          sudo mv vault /usr/local/bin/
+          rm vault.zip
+          vault version
 
           # Python requirements
           pip3 install --upgrade pip
@@ -106,10 +113,7 @@ jobs:
       # 8) Create Kubernetes MySQL Secret
       - name: Create Kubernetes MySQL Secret
         run: |
-          gcloud container clusters get-credentials vault-ha-cluster \
-            --zone ${{ secrets.GCP_ZONE }} \
-            --project ${{ secrets.GCP_PROJECT_ID }}
-
+          gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
           kubectl delete secret mysite-db-secrets -n default --ignore-not-found=true
           kubectl create secret generic mysite-db-secrets -n default \
             --from-literal=MYSQL_HOST=${{ secrets.MYSQL_HOST }} \
@@ -131,15 +135,13 @@ jobs:
           DOCKER_LOGIN_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKER_LOGIN_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-      # 10) Configure kubectl (again, just to be safe)
+      # 10) Configure kubectl
       - name: Configure kubectl
         run: |
-          gcloud container clusters get-credentials vault-ha-cluster \
-            --zone ${{ secrets.GCP_ZONE }} \
-            --project ${{ secrets.GCP_PROJECT_ID }}
+          gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
 
       # 11) Install Argo CD & Create App
-      - name: Install Argo CD
+      - name: Install Argo CD & Create App
         run: |
           kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
@@ -149,36 +151,15 @@ jobs:
           chmod +x argocd
           sudo mv argocd /usr/local/bin/argocd
 
-          # Wait for Argo CD server to be ready
           kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd
 
-          # Get Argo CD initial admin password
-          ARGOCD_PW=$(kubectl -n argocd get secret argocd-initial-admin-secret \
-            -o jsonpath="{.data.password}" | base64 -d)
+          ARGOCD_PW=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
 
-          # Login
-          argocd login argocd-server.argocd.svc.cluster.local:443 \
-            --username admin \
-            --password "$ARGOCD_PW" \
-            --insecure --grpc-web
+          argocd login argocd-server.argocd.svc.cluster.local:443 --username admin --password "$ARGOCD_PW" --insecure --grpc-web
 
-          # Create the Argo CD application to deploy the Helm chart
-          argocd app create instamini \
-            --repo https://github.com/casual-cat/instamini-project.git \
-            --path helm/instamini \
-            --dest-server https://kubernetes.default.svc \
-            --dest-namespace default \
-            --sync-policy automated \
-            --helm-set image.repository=${{ secrets.DOCKERHUB_USERNAME }}/instamini \
-            --helm-set image.tag=v3 \
-            --upsert \
-            --insecure \
-            --grpc-web
+          argocd app create instamini --repo https://github.com/casual-cat/instamini-project.git --path helm/instamini --dest-server https://kubernetes.default.svc --dest-namespace default --sync-policy automated --helm-set image.repository=${{ secrets.DOCKERHUB_USERNAME }}/instamini --helm-set image.tag=v3 --upsert --insecure --grpc-web
 
-          # Wait for creation
           argocd app wait instamini --operation --timeout=300 --insecure --grpc-web
-
-          # Sync
           argocd app sync instamini --insecure --grpc-web
           argocd app wait instamini --sync --health --timeout=300 --insecure --grpc-web
 
