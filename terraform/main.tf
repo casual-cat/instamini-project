@@ -97,13 +97,6 @@ resource "google_container_node_pool" "primary_nodes" {
 ##################################
 # 2) Create KMS Key Ring & Key for Vault Auto-Unseal
 ##################################
-# If you encounter a conflict error (Error 409), it means the KeyRing already exists.
-# To view existing KeyRings, run:
-#   gcloud kms keyrings list --location=${var.gcp_region} --project=${var.gcp_project}
-# To list your crypto keys in a specific key ring, run:
-#   gcloud kms keys list --keyring=<YOUR_KEY_RING> --location=${var.gcp_region} --project=${var.gcp_project}
-# If the KeyRing exists, you can import it into Terraform using:
-#   terraform import google_kms_key_ring.vault_ring projects/<your_project>/locations/<your_region>/keyRings/<your_key_ring>
 resource "google_kms_key_ring" "vault_ring" {
   name     = var.kms_key_ring
   project  = var.gcp_project
@@ -149,7 +142,8 @@ resource "helm_release" "vault" {
     file("${path.module}/vault-values.yaml")
   ]
 
-  # Removed the individual set blocks for server.config.seal.gcpckms.* as these are already defined in vault-values.yaml
+  # Removed individual set blocks for server.config.seal.gcpckms.* 
+  # since these are already defined in vault-values.yaml
 
   depends_on = [
     google_container_node_pool.primary_nodes,
@@ -177,77 +171,79 @@ resource "null_resource" "vault_init_and_config" {
   depends_on = [helm_release.vault]
 
   provisioner "local-exec" {
+    # Force the command to run in bash so that -o pipefail is supported
+    interpreter = ["/bin/bash", "-c"]
     command = <<-EOT
-#!/usr/bin/env bash
-set -euo pipefail
+      #!/usr/bin/env bash
+      set -euo pipefail
 
-echo "Waiting for vault-0 pod to be Running..."
-for i in {1..30}; do
-  PHASE=$(kubectl get pod vault-0 -n vault -o jsonpath='{.status.phase}' || true)
-  if [ "$PHASE" = "Running" ]; then
-    echo "vault-0 is running!"
-    break
-  else
-    echo "vault-0 not ready, found phase=$PHASE, sleeping 10s"
-    sleep 10
-  fi
-done
+      echo "Waiting for vault-0 pod to be Running..."
+      for i in {1..30}; do
+        PHASE=$(kubectl get pod vault-0 -n vault -o jsonpath='{.status.phase}' || true)
+        if [ "$PHASE" = "Running" ]; then
+          echo "vault-0 is running!"
+          break
+        else
+          echo "vault-0 not ready, found phase=$PHASE, sleeping 10s"
+          sleep 10
+        fi
+      done
 
-# Port-forward to Vault temporarily
-kubectl port-forward vault-0 8200:8200 -n vault &
-PF_PID=$!
-sleep 5
+      # Port-forward to Vault temporarily
+      kubectl port-forward vault-0 8200:8200 -n vault &
+      PF_PID=$!
+      sleep 5
 
-# Check if Vault is initialized
-if vault status 2>/dev/null | grep -q 'Initialized.*true'; then
-  echo "Vault already initialized, skipping operator init."
-else
-  echo "Initializing Vault..."
-  INIT_OUT=$(vault operator init -key-shares=1 -key-threshold=1 -format=json)
-  UNSEAL_KEY=$(echo "$INIT_OUT" | jq -r .unseal_keys_b64[0])
-  ROOT_TOKEN=$(echo "$INIT_OUT" | jq -r .root_token)
+      # Check if Vault is initialized
+      if vault status 2>/dev/null | grep -q 'Initialized.*true'; then
+        echo "Vault already initialized, skipping operator init."
+      else
+        echo "Initializing Vault..."
+        INIT_OUT=$(vault operator init -key-shares=1 -key-threshold=1 -format=json)
+        UNSEAL_KEY=$(echo "$INIT_OUT" | jq -r .unseal_keys_b64[0])
+        ROOT_TOKEN=$(echo "$INIT_OUT" | jq -r .root_token)
 
-  vault operator unseal "$UNSEAL_KEY"
-  echo "Vault unsealed with share."
+        vault operator unseal "$UNSEAL_KEY"
+        echo "Vault unsealed with share."
 
-  vault login "$ROOT_TOKEN"
-  vault token create -id="${random_password.vault_root_token.result}" -policy="root" -ttl=87600h
-  vault login "${random_password.vault_root_token.result}"
-fi
+        vault login "$ROOT_TOKEN"
+        vault token create -id="${random_password.vault_root_token.result}" -policy="root" -ttl=87600h
+        vault login "${random_password.vault_root_token.result}"
+      fi
 
-echo "Enabling Kubernetes auth method..."
-vault auth enable kubernetes || true
+      echo "Enabling Kubernetes auth method..."
+      vault auth enable kubernetes || true
 
-vault write auth/kubernetes/config \\
-  kubernetes_host="https://kubernetes.default.svc.cluster.local:443" \\
-  token_reviewer_jwt="$(cat /run/secrets/kubernetes.io/serviceaccount/token)" \\
-  kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      vault write auth/kubernetes/config \\
+        kubernetes_host="https://kubernetes.default.svc.cluster.local:443" \\
+        token_reviewer_jwt="$(cat /run/secrets/kubernetes.io/serviceaccount/token)" \\
+        kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 
-echo "Enabling database secrets engine..."
-vault secrets enable database || true
+      echo "Enabling database secrets engine..."
+      vault secrets enable database || true
 
-# Grab the instance connection name from GCloud
-INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_name}" --project "${var.gcp_project}" --format 'value(connectionName)')
+      # Grab the instance connection name from GCloud
+      INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_name}" --project "${var.gcp_project}" --format 'value(connectionName)')
 
-DB_USER="root"
-DB_PASS="${var.db_root_password}"
+      DB_USER="root"
+      DB_PASS="${var.db_root_password}"
 
-# Single-quoted {{username}} so Terraform won't parse it
-vault write database/config/my-sql-db \\
-  plugin_name="mysql-legacy-database-plugin" \\
-  connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME"')/' \\
-  username="$DB_USER" \\
-  password="$DB_PASS"
+      # Single-quoted {{username}} so Terraform won't parse it
+      vault write database/config/my-sql-db \\
+        plugin_name="mysql-legacy-database-plugin" \\
+        connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME"')/' \\
+        username="$DB_USER" \\
+        password="$DB_PASS"
 
-vault write database/roles/my-app-role \\
-  db_name="my-sql-db" \\
-  creation_statements="CREATE USER '{{name}}'@'%' IDENTIFIED BY '{{password}}'; GRANT ALL PRIVILEGES ON *.* TO '{{name}}'@'%';" \\
-  default_ttl="1h" \\
-  max_ttl="24h"
+      vault write database/roles/my-app-role \\
+        db_name="my-sql-db" \\
+        creation_statements="CREATE USER '{{name}}'@'%' IDENTIFIED BY '{{password}}'; GRANT ALL PRIVILEGES ON *.* TO '{{name}}'@'%';" \\
+        default_ttl="1h" \\
+        max_ttl="24h"
 
-kill $PF_PID || true
-echo "Vault DB secrets engine configured!"
-EOT
+      kill $PF_PID || true
+      echo "Vault DB secrets engine configured!"
+    EOT
   }
 }
 

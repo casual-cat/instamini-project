@@ -68,7 +68,14 @@ jobs:
           gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
           gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
 
-      # 5) Test Python App
+      # 5) Terraform Import Keyring (optional)
+      - name: Terraform Import Keyring
+        run: |
+          cd terraform
+          terraform init -backend-config="path=/tmp/terraform.tfstate"
+          terraform import google_kms_key_ring.vault_ring projects/instsmini-auto/locations/us-central1/keyRings/vault-ha-keyring || echo "KeyRing already imported"
+
+      # 6) Test Python App
       - name: Test Python App
         env:
           MYSQL_HOST: ${{ secrets.MYSQL_HOST }}
@@ -79,7 +86,7 @@ jobs:
         run: |
           python3 -m unittest discover -s tests
 
-      # 6) Terraform Init/Plan/Apply
+      # 7) Terraform Init/Plan/Apply
       - name: Terraform Init/Plan/Apply
         env:
           TF_VAR_gcp_project: ${{ secrets.GCP_PROJECT_ID }}
@@ -96,7 +103,7 @@ jobs:
           terraform plan
           terraform apply -auto-approve
 
-      # 7) Create Kubernetes MySQL Secret
+      # 8) Create Kubernetes MySQL Secret
       - name: Create Kubernetes MySQL Secret
         run: |
           gcloud container clusters get-credentials vault-ha-cluster \
@@ -111,7 +118,7 @@ jobs:
             --from-literal=MYSQL_PASS=${{ secrets.MYSQL_PASS }} \
             --from-literal=MYSQL_DB=${{ secrets.MYSQL_DB }}
 
-      # 8) Docker Build & Push
+      # 9) Docker Build & Push
       - name: Docker Build & Push
         uses: docker/build-push-action@v2
         with:
@@ -124,14 +131,14 @@ jobs:
           DOCKER_LOGIN_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKER_LOGIN_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-      # 9) Configure kubectl (again, just to be safe)
+      # 10) Configure kubectl (again, just to be safe)
       - name: Configure kubectl
         run: |
           gcloud container clusters get-credentials vault-ha-cluster \
             --zone ${{ secrets.GCP_ZONE }} \
             --project ${{ secrets.GCP_PROJECT_ID }}
 
-      # 10) Install Argo CD & Create App
+      # 11) Install Argo CD & Create App
       - name: Install Argo CD
         run: |
           kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
@@ -175,7 +182,7 @@ jobs:
           argocd app sync instamini --insecure --grpc-web
           argocd app wait instamini --sync --health --timeout=300 --insecure --grpc-web
 
-      # 11) Print External IP
+      # 12) Print External IP
       - name: Print External IP
         run: |
           for i in {1..10}; do

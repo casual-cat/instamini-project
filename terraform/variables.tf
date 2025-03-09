@@ -1,5 +1,6 @@
 variable "gcp_project" {
   type = string
+  default = "instsmini-auto"
 }
 
 variable "gcp_region" {
@@ -14,12 +15,12 @@ variable "gcp_zone" {
 
 variable "kms_key_ring" {
   type    = string
-  default = "vault-ha-keyring-auto"
+  default = "vault-ha-keyring"
 }
 
 variable "kms_crypto_key" {
   type    = string
-  default = "vault-auto-unseal-instamini"
+  default = "vault-auto-unseal"
 }
 
 variable "vault_gcp_sa_key_b64" {
