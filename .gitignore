@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info
+
+# Env files
+.env
+*.env
+
+# Byte-compiled / virtualenv
+.venv/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Terraform
+*.tfvars
+
+# Others
+*.log
+bad_words.txt
