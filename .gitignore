@@ -16,6 +16,7 @@ pip-delete-this-directory.txt
 
 # Terraform
 *.tfvars
+.terraform
 
 # Others
 *.log

@@ -5,6 +5,10 @@
 
 terraform {
   required_version = ">=1.3.0"
+  backend "gcs" {
+    bucket = "tfstate-bucket-instamini"
+    prefix = "terraform/state"
+  }
   required_providers {
     google = {
       source  = "hashicorp/google"
@@ -27,19 +31,12 @@ terraform {
       version = "~> 3.2"
     }
   }
-
-  # We'll store state locally for simplicity (in terraform.tfstate),
-  # but ideally you might use a remote backend in production.
-  backend "local" {
-    path = "terraform.tfstate"
-  }
 }
 
 provider "google" {
   project     = var.gcp_project
   region      = var.gcp_region
   zone        = var.gcp_zone
-  # Tells Terraform to load the credentials from /tmp/gcp-key.json
   credentials = file("/tmp/gcp-key.json")
 }
 
@@ -58,7 +55,6 @@ provider "helm" {
       google_container_cluster.primary.master_auth.0.cluster_ca_certificate
     )
     token                  = data.google_client_config.default.access_token
-    # load_config_file removed (deprecated in newer provider versions)
   }
 }
 
@@ -101,6 +97,10 @@ resource "google_kms_key_ring" "vault_ring" {
   name     = var.kms_key_ring
   project  = var.gcp_project
   location = var.gcp_region
+
+  lifecycle {
+    ignore_changes = [name, project, location]
+  }
 }
 
 resource "google_kms_crypto_key" "vault_key" {
@@ -119,7 +119,6 @@ resource "kubernetes_namespace" "vault_ns" {
   }
 }
 
-# We'll store the GCP SA JSON (for KMS usage) as a secret
 resource "kubernetes_secret" "vault_gcp_key" {
   metadata {
     name      = "gcp-key"
@@ -142,9 +141,6 @@ resource "helm_release" "vault" {
     file("${path.module}/vault-values.yaml")
   ]
 
-  # Removed individual set blocks for server.config.seal.gcpckms.* 
-  # since these are already defined in vault-values.yaml
-
   depends_on = [
     google_container_node_pool.primary_nodes,
     kubernetes_secret.vault_gcp_key
@@ -154,7 +150,7 @@ resource "helm_release" "vault" {
 }
 
 ##################################
-# 4) (Optional) Auto-Init Vault & DB Secrets
+# 4) Auto-Init Vault & DB Secrets
 ##################################
 resource "random_password" "vault_root_token" {
   length  = 32
@@ -162,7 +158,6 @@ resource "random_password" "vault_root_token" {
 }
 
 data "google_sql_database_instance" "existing_db" {
-  # The name of your Cloud SQL instance
   name    = var.cloud_sql_instance_name
   project = var.gcp_project
 }
@@ -171,7 +166,6 @@ resource "null_resource" "vault_init_and_config" {
   depends_on = [helm_release.vault]
 
   provisioner "local-exec" {
-    # Force the command to run in bash so that -o pipefail is supported
     interpreter = ["/bin/bash", "-c"]
     command = <<-EOT
       #!/usr/bin/env bash
@@ -189,12 +183,25 @@ resource "null_resource" "vault_init_and_config" {
         fi
       done
 
-      # Port-forward to Vault temporarily
+      echo "Port-forwarding to Vault pod..."
       kubectl port-forward vault-0 8200:8200 -n vault &
       PF_PID=$!
-      sleep 5
+      sleep 10
 
-      # Check if Vault is initialized
+      echo "Waiting for Vault to become available on localhost:8200..."
+      RETRY=0
+      until curl -sk https://127.0.0.1:8200/v1/sys/health; do
+        echo "Vault not available, retrying in 5 seconds..."
+        sleep 5
+        RETRY=$((RETRY+1))
+        if [ $RETRY -ge 6 ]; then
+          echo "Vault did not become available, aborting"
+          kill $PF_PID || true
+          exit 1
+        fi
+      done
+
+      echo "Initializing Vault if not already initialized..."
       if vault status 2>/dev/null | grep -q 'Initialized.*true'; then
         echo "Vault already initialized, skipping operator init."
       else
@@ -222,13 +229,10 @@ resource "null_resource" "vault_init_and_config" {
       echo "Enabling database secrets engine..."
       vault secrets enable database || true
 
-      # Grab the instance connection name from GCloud
+      echo "Configuring database secrets engine..."
       INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_name}" --project "${var.gcp_project}" --format 'value(connectionName)')
-
       DB_USER="root"
       DB_PASS="${var.db_root_password}"
-
-      # Single-quoted {{username}} so Terraform won't parse it
       vault write database/config/my-sql-db \\
         plugin_name="mysql-legacy-database-plugin" \\
         connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME"')/' \\
