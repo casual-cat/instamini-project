@@ -42,8 +42,10 @@ jobs:
           terraform -version
 
           # Google Cloud CLI
-          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee /etc/apt/sources.list.d/cloud-sdk.list
-          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
+          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+            | sudo tee /etc/apt/sources.list.d/cloud-sdk.list
+          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+            | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
           sudo apt-get update && sudo apt-get install -y google-cloud-cli
 
           # kubectl
@@ -79,7 +81,7 @@ jobs:
       - name: Terraform Import Keyring
         run: |
           cd terraform
-          terraform init -backend-config="path=/tmp/terraform.tfstate"
+          terraform init -backend-config="bucket=tfstate-bucket-instamini" -backend-config="prefix=terraform/state"
           terraform import google_kms_key_ring.vault_ring projects/instsmini-auto/locations/us-central1/keyRings/vault-ha-keyring || echo "KeyRing already imported"
 
       # 6) Test Python App
@@ -106,7 +108,7 @@ jobs:
           TF_VAR_cloud_sql_instance_name: ${{ secrets.CLOUD_SQL_INSTANCE_NAME }}
         run: |
           cd terraform
-          terraform init -backend-config="path=/tmp/terraform.tfstate"
+          terraform init -backend-config="bucket=tfstate-bucket-instamini" -backend-config="prefix=terraform/state"
           terraform plan
           terraform apply -auto-approve
 
@@ -146,19 +148,13 @@ jobs:
           kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
           kubectl rollout status deployment argocd-server -n argocd --timeout=300s
-
           curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
           chmod +x argocd
           sudo mv argocd /usr/local/bin/argocd
-
           kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd
-
           ARGOCD_PW=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-
           argocd login argocd-server.argocd.svc.cluster.local:443 --username admin --password "$ARGOCD_PW" --insecure --grpc-web
-
           argocd app create instamini --repo https://github.com/casual-cat/instamini-project.git --path helm/instamini --dest-server https://kubernetes.default.svc --dest-namespace default --sync-policy automated --helm-set image.repository=${{ secrets.DOCKERHUB_USERNAME }}/instamini --helm-set image.tag=v3 --upsert --insecure --grpc-web
-
           argocd app wait instamini --operation --timeout=300 --insecure --grpc-web
           argocd app sync instamini --insecure --grpc-web
           argocd app wait instamini --sync --health --timeout=300 --insecure --grpc-web
