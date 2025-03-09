@@ -44,7 +44,7 @@ provider "google" {
 }
 
 provider "kubernetes" {
-  host                   = google_container_cluster.primary.endpoint
+  host                   = "https://${google_container_cluster.primary.endpoint}"
   cluster_ca_certificate = base64decode(
     google_container_cluster.primary.master_auth.0.cluster_ca_certificate
   )
@@ -53,7 +53,7 @@ provider "kubernetes" {
 
 provider "helm" {
   kubernetes {
-    host                   = google_container_cluster.primary.endpoint
+    host                   = "https://${google_container_cluster.primary.endpoint}"
     cluster_ca_certificate = base64decode(
       google_container_cluster.primary.master_auth.0.cluster_ca_certificate
     )
@@ -97,6 +97,13 @@ resource "google_container_node_pool" "primary_nodes" {
 ##################################
 # 2) Create KMS Key Ring & Key for Vault Auto-Unseal
 ##################################
+# If you encounter a conflict error (Error 409), it means the KeyRing already exists.
+# To view existing KeyRings, run:
+#   gcloud kms keyrings list --location=${var.gcp_region} --project=${var.gcp_project}
+# To list your crypto keys in a specific key ring, run:
+#   gcloud kms keys list --keyring=<YOUR_KEY_RING> --location=${var.gcp_region} --project=${var.gcp_project}
+# If the KeyRing exists, you can import it into Terraform using:
+#   terraform import google_kms_key_ring.vault_ring projects/<your_project>/locations/<your_region>/keyRings/<your_key_ring>
 resource "google_kms_key_ring" "vault_ring" {
   name     = var.kms_key_ring
   project  = var.gcp_project
@@ -142,22 +149,7 @@ resource "helm_release" "vault" {
     file("${path.module}/vault-values.yaml")
   ]
 
-  set {
-    name  = "server.config.seal.gcpckms.project"
-    value = var.gcp_project
-  }
-  set {
-    name  = "server.config.seal.gcpckms.region"
-    value = var.gcp_region
-  }
-  set {
-    name  = "server.config.seal.gcpckms.key_ring"
-    value = var.kms_key_ring
-  }
-  set {
-    name  = "server.config.seal.gcpckms.crypto_key"
-    value = var.kms_crypto_key
-  }
+  # Removed the individual set blocks for server.config.seal.gcpckms.* as these are already defined in vault-values.yaml
 
   depends_on = [
     google_container_node_pool.primary_nodes,
