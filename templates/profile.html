@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="profile-page-instagram animated-fade-in">
+  <div class="profile-header">
+    <!-- PROFILE PIC CONTAINER -->
+    <div class="profile-pic-container">
+      {% if user.profile_picture %}
+        <img class="profile-picture-large"
+             src="{{ url_for('static', filename='uploads/' ~ user.profile_picture) }}"
+             alt="Profile Picture" />
+      {% else %}
+        <img class="profile-picture-large"
+             src="{{ url_for('static', filename='uploads/default.png') }}"
+             alt="No Profile Picture" />
+      {% endif %}
+    </div>
+
+    <!-- USER INFO & EDIT FORM -->
+    <div class="user-info-container">
+      <div class="user-top-row">
+        <h2 class="username">{{ user.username }}</h2>
+      </div>
+      <ul class="profile-stats">
+        <li>
+          <span class="stat-number">{{ user_post_count }}</span> posts
+        </li>
+      </ul>
+      <div class="profile-bio">
+        {{ user.bio if user.bio else "" }}
+      </div>
+
+      <!-- EDIT PROFILE FORM -->
+      <form method="POST" action="{{ url_for('profile') }}"
+            enctype="multipart/form-data"
+            class="profile-edit-form">
+        
+        <!-- File upload -->
+        <label class="custom-file-label">
+          <input type="file" name="profile_picture" accept="image/*" onchange="showFilename(this, 'pfpFileName')">
+          <span>Select New Picture</span>
+        </label>
+        <span id="pfpFileName" style="margin-bottom: 0.5rem; display:block; font-size:0.9rem; color:#666;">
+          No file chosen
+        </span>
+
+        <!-- Bio -->
+        <label>Edit Bio:</label>
+        <textarea name="bio" rows="2">{{ user.bio or '' }}</textarea>
+
+        <button type="submit" class="btn-primary">Update Profile</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- TABS: "Posts" / "Saved" -->
+  <div class="profile-tabs">
+    <button class="tab-button" onclick="showTab('posts')">Posts</button>
+    <button class="tab-button" onclick="showTab('saved')">Saved</button>
+  </div>
+
+  <!-- POSTS GRID -->
+  <div id="posts" class="profile-posts-grid" style="display: grid;">
+    {% for post in posts %}
+      <div class="post-tile">
+        {% if post.media_filename %}
+          {% set ext = post.media_filename|lower %}
+          {% if ext.endswith('.png') or ext.endswith('.jpg') or ext.endswith('.jpeg') or ext.endswith('.gif') %}
+            <img class="tile-image"
+                 src="{{ url_for('static', filename='uploads/' ~ post.media_filename) }}"
+                 alt="Post Media">
+          {% elif ext.endswith('.mp4') or ext.endswith('.mov') or ext.endswith('.avi') %}
+            <video class="tile-image"
+                   src="{{ url_for('static', filename='uploads/' ~ post.media_filename) }}"
+                   controls></video>
+          {% else %}
+            <p>{{ post.content }}</p>
+          {% endif %}
+        {% else %}
+          <p>{{ post.content }}</p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+
+  <!-- SAVED GRID -->
+  <div id="saved" class="profile-posts-grid" style="display: none;">
+    {% for post in saved_posts %}
+      <div class="post-tile">
+        {% if post.media_filename %}
+          {% set spx = post.media_filename|lower %}
+          {% if spx.endswith('.png') or spx.endswith('.jpg') or spx.endswith('.jpeg') or spx.endswith('.gif') %}
+            <img class="tile-image"
+                 src="{{ url_for('static', filename='uploads/' ~ post.media_filename) }}"
+                 alt="Saved Media">
+          {% elif spx.endswith('.mp4') or spx.endswith('.mov') or spx.endswith('.avi') %}
+            <video class="tile-image"
+                   src="{{ url_for('static', filename='uploads/' ~ post.media_filename) }}"
+                   controls></video>
+          {% else %}
+            <p>{{ post.content }}</p>
+          {% endif %}
+        {% else %}
+          <p>{{ post.content }}</p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<script>
+function showTab(tab) {
+  document.getElementById('posts').style.display  = (tab === 'posts') ? 'grid' : 'none';
+  document.getElementById('saved').style.display  = (tab === 'saved') ? 'grid' : 'none';
+}
+
+// Show chosen file name
+function showFilename(input, labelId) {
+  const labelElem = document.getElementById(labelId);
+  if (input.files && input.files[0]) {
+    labelElem.textContent = input.files[0].name;
+  } else {
+    labelElem.textContent = "No file chosen";
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="feed-container animated-fade-in">
+  <!-- STORIES (Instagram-like) -->
+  <div class="stories-section">
+    <h3>Stories (24h)</h3>
+    <div class="stories-bar">
+      {% for story in stories %}
+        <div class="story-bubble"
+             onclick="openStoryModal('{{ url_for('static', filename='uploads/' ~ story.media_filename) }}',
+                                      '{{ story.username }}')">
+          <img src="{{ url_for('static', filename='uploads/' ~ story.media_filename) }}" alt="Story">
+          <span class="story-user">{{ story.username }}</span>
+        </div>
+      {% endfor %}
+    </div>
+
+    <!-- Upload new story -->
+    <form method="POST" action="{{ url_for('upload_story') }}" enctype="multipart/form-data" class="story-upload-form">
+      <label>New Story:</label>
+      <label class="custom-file-label">
+        <input type="file" name="story_file" accept="image/*,video/*">
+        <span>Select File</span>
+      </label>
+      <button type="submit" class="btn-story-upload">Upload</button>
+    </form>
+  </div>
+
+  <!-- CREATE POST (Twitter-like “What’s happening?”) -->
+  <h2 class="section-heading">Create a Post</h2>
+  <form method="POST" action="{{ url_for('feed') }}" enctype="multipart/form-data" class="post-form">
+    <textarea name="content" rows="2" placeholder="What's happening?"></textarea>
+    <label class="custom-file-label">
+      <input type="file" name="media_file" accept="image/*,video/*">
+      <span>Select File</span>
+    </label>
+    <button type="submit" class="btn-post">Post</button>
+  </form>
+
+  <h2 class="section-heading">Latest Posts</h2>
+
+  {% for post in posts %}
+  <div class="post animated-slide-up" id="post-{{ post.id }}">
+    <div class="post-left">
+      <!-- Profile Pic -->
+      {% if post.profile_picture %}
+        <img class="post-profile-pic" src="{{ url_for('static', filename='uploads/' ~ post.profile_picture) }}" alt="Profile Pic">
+      {% else %}
+        <img class="post-profile-pic" src="{{ url_for('static', filename='uploads/default.png') }}" alt="No Profile Pic">
+      {% endif %}
+    </div>
+
+    <div class="post-right">
+      <!-- Top row: user + time -->
+      <div class="post-header">
+        <div class="post-author">
+          <a href="{{ url_for('user_profile', username=post.username) }}">{{ post.username }}</a>
+        </div>
+        <div class="post-time">
+          {{ post.created_at }}
+        </div>
+      </div>
+
+      <!-- Content -->
+      <div class="post-content">
+        <p>{{ post.content }}</p>
+        {% if post.media_filename %}
+          {% set ext = post.media_filename|lower %}
+          {% if ext.endswith('.png') or ext.endswith('.jpg') or ext.endswith('.jpeg') or ext.endswith('.gif') %}
+            <img class="post-media" src="{{ url_for('static', filename='uploads/' ~ post.media_filename) }}" alt="Post Media">
+          {% elif ext.endswith('.mp4') or ext.endswith('.mov') or ext.endswith('.avi') %}
+            <video class="post-media" src="{{ url_for('static', filename='uploads/' ~ post.media_filename) }}" controls></video>
+          {% endif %}
+        {% endif %}
+      </div>
+
+      <!-- Actions (like, save, delete) -->
+      <div class="post-actions">
+        <!-- Like -->
+        <button class="like-button {% if post.user_has_liked %}liked{% endif %}"
+                onclick="toggleLike({{ post.id }})"
+                id="likeBtn-{{ post.id }}">
+          {% if post.user_has_liked %}
+            <i class="fas fa-heart"></i>
+          {% else %}
+            <i class="far fa-heart"></i>
+          {% endif %}
+        </button>
+        <span class="like-count" id="likeCount-{{ post.id }}">{{ post.like_count }}</span>
+
+        <!-- Save -->
+        <button class="save-button"
+                onclick="toggleSave({{ post.id }})"
+                id="saveBtn-{{ post.id }}">
+          {% if post.user_has_saved %} 
+            <i class="fas fa-bookmark"></i> 
+          {% else %} 
+            <i class="far fa-bookmark"></i> 
+          {% endif %}
+        </button>
+
+        <!-- Delete (if admin or post owner) -->
+        {% if post.user_id == current_user_id or session.get('username') == 'admin' %}
+          <form method="POST" action="{{ url_for('delete_post', post_id=post.id) }}" style="display:inline;">
+            <button type="submit" class="delete-button">
+              <i class="fas fa-trash-alt"></i>
+            </button>
+          </form>
+        {% endif %}
+      </div>
+
+      <!-- Comments Section -->
+      <div class="comments-section" id="comments-{{ post.id }}">
+        {% if post.comments %}
+          {% for c in post.comments %}
+          <div class="single-comment">
+            <div class="comment-top">
+              <!-- Commenter pic + username + time -->
+              {% if c.profile_picture %}
+                <img src="{{ url_for('static', filename='uploads/' ~ c.profile_picture) }}"
+                     alt="commenter pic"
+                     class="comment-profile-pic">
+              {% else %}
+                <img src="{{ url_for('static', filename='uploads/default.png') }}"
+                     alt="No Pic"
+                     class="comment-profile-pic">
+              {% endif %}
+              <strong>
+                <a href="{{ url_for('user_profile', username=c.username) }}">{{ c.username }}</a>
+              </strong>
+              <span class="comment-time">{{ c.created_at }}</span>
+            </div>
+            <p class="comment-body">{{ c.content }}</p>
+            {% if c.username == session.get('username') or session.get('username') == 'admin' %}
+            <form method="POST" action="{{ url_for('delete_comment', comment_id=c.id) }}">
+              <button type="submit" class="delete-button comment-delete">
+                <i class="fas fa-trash-alt"></i>
+              </button>
+            </form>
+            {% endif %}
+          </div>
+          {% endfor %}
+        {% else %}
+          <p class="no-comments">No comments yet.</p>
+        {% endif %}
+        
+        <!-- Add comment form (AJAX) -->
+        <form class="comment-form" onsubmit="return postComment(event, {{ post.id }})">
+          <textarea name="comment_content" rows="1" placeholder="Add a comment..."></textarea>
+          <button type="submit" class="btn-primary comment-submit">
+            <i class="fas fa-comment-dots"></i>
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+// --------------- LIKE/UNLIKE ---------------
+function toggleLike(postId) {
+  fetch(`/like_api/${postId}`, { method:'POST' })
+    .then(r=>r.json())
+    .then(data=>{
+      if(data.error) {
+        alert(data.error);
+        return;
+      }
+      const btn = document.getElementById(`likeBtn-${postId}`);
+      const countSpan = document.getElementById(`likeCount-${postId}`);
+
+      if(data.status==="liked") {
+        btn.classList.add("liked");
+        btn.innerHTML = '<i class="fas fa-heart"></i>';
+      } else {
+        btn.classList.remove("liked");
+        btn.innerHTML = '<i class="far fa-heart"></i>';
+      }
+      countSpan.textContent = data.like_count;
+    })
+    .catch(err=>console.error("toggleLike error:",err));
+}
+
+// --------------- SAVE/UNSAVE ---------------
+function toggleSave(postId) {
+  fetch(`/save_api/${postId}`, {method:'POST'})
+    .then(r=>r.json())
+    .then(data=>{
+      if(data.error){
+        alert(data.error);
+        return;
+      }
+      const btn=document.getElementById(`saveBtn-${postId}`);
+      if(data.status==="saved"){
+        btn.innerHTML='<i class="fas fa-bookmark"></i>';
+      } else {
+        btn.innerHTML='<i class="far fa-bookmark"></i>';
+      }
+    })
+    .catch(err=>console.error("toggleSave error:",err));
+}
+
+// --------------- COMMENT (AJAX) ---------------
+function postComment(ev, postId) {
+  ev.preventDefault();
+  const form = ev.target;
+  const formData = new FormData(form);
+
+  fetch(`/comment_api/${postId}`, {
+    method:'POST',
+    body: formData
+  })
+  .then(r=>r.json())
+  .then(data=>{
+    if(data.error){
+      alert(data.error);
+      return;
+    }
+    const c = data.comment;
+    // Insert new comment into comment list
+    const commentBox = document.getElementById(`comments-${postId}`);
+    let html=`
+      <div class="single-comment">
+        <div class="comment-top">
+          <img src="/static/uploads/${ c.profile_picture ? c.profile_picture : 'default.png' }"
+               alt="commenter pic"
+               class="comment-profile-pic">
+          <strong><a href="/user/${ c.username }">${ c.username }</a></strong>
+          <span class="comment-time">${ c.created_at }</span>
+        </div>
+        <p class="comment-body">${ c.content }</p>
+      </div>
+    `;
+    const parser=new DOMParser();
+    const doc=parser.parseFromString(html,"text/html");
+    const newDiv=doc.querySelector(".single-comment");
+    // Insert before the form
+    commentBox.insertBefore(newDiv, form);
+
+    // Clear the textarea
+    form.querySelector('textarea[name="comment_content"]').value="";
+  })
+  .catch(err=>console.error("postComment error:",err));
+
+  return false;
+}
+</script>
+{% endblock %}

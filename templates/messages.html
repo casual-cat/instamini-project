@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="messages-page animated-fade-in">
+
+  {% if not conversation %}
+    <!-- ========== CONVERSATION LIST VIEW ========== -->
+    <h2>Conversations</h2>
+    <ul class="conversation-list">
+      {% for partner in conversation_partners %}
+        <li class="conversation-item">
+          <!-- Partner's PFP fallback to default if None -->
+          {% if partner.profile_picture %}
+            <img class="conversation-profile-pic"
+                 src="{{ url_for('static', filename='uploads/' ~ partner.profile_picture) }}"
+                 alt="Partner Pic">
+          {% else %}
+            <img class="conversation-profile-pic"
+                 src="{{ url_for('static', filename='uploads/default.png') }}"
+                 alt="No Pic">
+          {% endif %}
+
+          <a href="{{ url_for('direct_messages', username=partner['username']) }}">
+            {{ partner['username'] }}
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+    <p>If no conversations yet, try “Message” from a user profile or wait for someone to message you.</p>
+
+  {% else %}
+    <!-- ========== SINGLE CONVERSATION VIEW ========== -->
+    <div class="conversation-header">
+      <!-- Show the other user's pic up top (optional) -->
+      {% if other_user.profile_picture %}
+        <img class="conversation-profile-pic"
+             src="{{ url_for('static', filename='uploads/' ~ other_user.profile_picture) }}"
+             alt="Other user's pic">
+      {% else %}
+        <img class="conversation-profile-pic"
+             src="{{ url_for('static', filename='uploads/default.png') }}"
+             alt="No Pic">
+      {% endif %}
+      <h2>Chat with {{ other_user.username }}</h2>
+    </div>
+
+    <!-- Message thread area -->
+    <div id="messageThread" class="message-thread">
+      {% for msg in messages_list %}
+        <div class="message-bubble {% if msg.sender_id == session.get('user_id') %}sent{% else %}received{% endif %}">
+          <div class="bubble-header">
+            {% if msg.sender_profile_picture %}
+              <img class="msg-pfp"
+                   src="{{ url_for('static', filename='uploads/' ~ msg.sender_profile_picture) }}"
+                   alt="Sender PFP">
+            {% else %}
+              <img class="msg-pfp"
+                   src="{{ url_for('static', filename='uploads/default.png') }}"
+                   alt="No Pic">
+            {% endif %}
+          </div>
+          <p>{{ msg.content }}</p>
+          <span class="msg-time">{{ msg.created_at }}</span>
+        </div>
+      {% endfor %}
+    </div>
+
+    <!-- Send new message form -->
+    <form method="POST"
+          action="{{ url_for('direct_messages', username=other_user.username) }}"
+          class="message-compose-form"
+          id="msgForm">
+      <textarea name="content" rows="2" placeholder="Type a message..."></textarea>
+      <button type="submit" class="btn-primary">Send</button>
+    </form>
+  {% endif %}
+</div>
+
+{% if conversation %}
+<!-- Auto-refresh using messages_api to update the thread -->
+<script>
+const userID = {{ session.get('user_id')|default('null') }};
+const otherUser = "{{ other_user.username }}";
+const messageThread = document.getElementById("messageThread");
+
+function fetchMessages() {
+  fetch(`/messages_api/${otherUser}`)
+    .then(response => response.json())
+    .then(data => {
+      if (data.error) {
+        console.error("Messages error:", data.error);
+        return;
+      }
+      messageThread.innerHTML = "";
+      data.messages.forEach(msg => {
+        const bubble = document.createElement("div");
+        bubble.classList.add("message-bubble");
+
+        // 'sent' vs. 'received' style
+        if (msg.sender_id == userID) {
+          bubble.classList.add("sent");
+        } else {
+          bubble.classList.add("received");
+        }
+
+        // Build the bubble’s inner HTML
+        const pfp = msg.sender_profile_picture
+          ? `/static/uploads/${msg.sender_profile_picture}`
+          : `/static/uploads/default.png`;
+
+        bubble.innerHTML = `
+          <div class="bubble-header">
+            <img class="msg-pfp" src="${pfp}" alt="Sender PFP">
+          </div>
+          <p>${msg.content}</p>
+          <span class="msg-time">${msg.created_at}</span>
+        `;
+        messageThread.appendChild(bubble);
+      });
+
+      // auto-scroll to bottom
+      messageThread.scrollTop = messageThread.scrollHeight;
+    })
+    .catch(err => console.error("fetchMessages error:", err));
+}
+
+// Poll every 3 seconds
+setInterval(fetchMessages, 3000);
+
+// Press Enter to submit the form
+const msgForm = document.getElementById("msgForm");
+if (msgForm) {
+  const textarea = msgForm.querySelector("textarea[name='content']");
+  textarea.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      msgForm.submit();
+    }
+  });
+}
+</script>
+{% endif %}
+{% endblock %}

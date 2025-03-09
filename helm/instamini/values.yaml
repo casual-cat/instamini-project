@@ -1,0 +1,18 @@
+replicaCount: 1
+
+image:
+  repository: "gabidelcea/instamini"  # Or your own DockerHub repo
+  tag: "v3"
+  pullPolicy: IfNotPresent
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 5001
+
+# Vault injection - if you want dynamic DB credentials
+vault:
+  enabled: true
+  addr: "http://vault.vault.svc.cluster.local:8200"
+  role: "my-app-role"
+  dbCredsPath: "database/creds/my-app-role"

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="profile-page-instagram animated-fade-in">
+  <div class="profile-header">
+    <!-- PROFILE PIC -->
+    <div class="profile-pic-container">
+      {% if user.profile_picture %}
+        <img class="profile-picture-large"
+             src="{{ url_for('static', filename='uploads/' ~ user.profile_picture) }}"
+             alt="Profile Pic" />
+      {% else %}
+        <img class="profile-picture-large"
+             src="{{ url_for('static', filename='uploads/default.png') }}"
+             alt="No Profile Pic" />
+      {% endif %}
+    </div>
+
+    <!-- USERNAME, STATS, BIO -->
+    <div class="user-info-container">
+      <div class="user-top-row">
+        <h2 class="username">{{ user.username }}</h2>
+        <!-- OPTIONAL: "Message" button to start chat -->
+        <form method="GET" action="{{ url_for('direct_messages', username=user.username) }}">
+          <button class="btn-primary" style="padding: 0.3rem 1rem;">Message</button>
+        </form>
+      </div>
+
+      <ul class="profile-stats">
+        <li>
+          <span class="stat-number">{{ user_post_count }}</span> posts
+        </li>
+      </ul>
+      <div class="profile-bio">
+        {{ user.bio if user.bio else "" }}
+      </div>
+    </div>
+  </div>
+
+  <!-- Just a "Posts" tab or static heading -->
+  <div class="profile-tabs">
+    <button class="tab-button active" disabled>Posts</button>
+  </div>
+
+  <!-- POSTS GRID -->
+  <div class="profile-posts-grid">
+    {% for post in posts %}
+      <div class="post-tile">
+        {% if post.media_filename %}
+          {% set ext = post.media_filename|lower %}
+          {% if ext.endswith('.png') or ext.endswith('.jpg') or ext.endswith('.jpeg') or ext.endswith('.gif') %}
+            <img class="tile-image"
+                 src="{{ url_for('static', filename='uploads/' ~ post.media_filename) }}"
+                 alt="Post Media">
+          {% elif ext.endswith('.mp4') or ext.endswith('.mov') or ext.endswith('.avi') %}
+            <video class="tile-image"
+                   src="{{ url_for('static', filename='uploads/' ~ post.media_filename) }}"
+                   controls></video>
+          {% else %}
+            <p>{{ post.content }}</p>
+          {% endif %}
+        {% else %}
+          <p>{{ post.content }}</p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
