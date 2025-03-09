@@ -14,12 +14,12 @@ variable "gcp_zone" {
 
 variable "kms_key_ring" {
   type    = string
-  default = "vault-ha-keyring"
+  default = "vault-ha-keyring-auto"
 }
 
 variable "kms_crypto_key" {
   type    = string
-  default = "vault-auto-unseal"
+  default = "vault-auto-unseal-instamini"
 }
 
 variable "vault_gcp_sa_key_b64" {
