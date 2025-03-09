@@ -12,9 +12,15 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 
 # ---------------------------------------------------
-# CONFIG
+# ENVIRONMENT-BASED CONFIG
 # ---------------------------------------------------
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "YOUR_SUPER_SECRET_KEY")
+
+MYSQL_HOST = os.environ.get("MYSQL_HOST", "localhost")
+MYSQL_PORT = int(os.environ.get("MYSQL_PORT", 3306))
+MYSQL_USER = os.environ.get("MYSQL_USER", "root")
+MYSQL_PASS = os.environ.get("MYSQL_PASS", "")
+MYSQL_DB   = os.environ.get("MYSQL_DB", "socialdb")
 
 BAD_WORDS_FILE = "bad_words.txt"
 MAX_WORDS      = 50
@@ -177,8 +183,6 @@ def init_db():
     conn.commit()
     cur.close()
     conn.close()
-
-init_db()
 
 def ensure_admin_exists():
     conn = get_db_connection(MYSQL_DB)
@@ -694,10 +698,9 @@ def messages_api(username):
             "created_at": str(msg["created_at"]),
             "sender_id": msg["sender_id"],
             "sender_name": msg["sender_name"],
-            "sender_profile_picture": msg["sender_profile_picture"],  # used in JS
+            "sender_profile_picture": msg["sender_profile_picture"],
             "recipient_id": msg["recipient_id"],
             "recipient_name": msg["recipient_name"]
-            # "recipient_profile_picture": msg["recipient_profile_picture"] if needed
         })
     return jsonify({"messages": data})
 
@@ -852,5 +855,11 @@ def user_profile(username):
 def uploads(filename):
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
+# ---------------------------------------------------
+# MAIN ENTRY POINT
+# ---------------------------------------------------
 if __name__=="__main__":
+    # Initialize DB & ensure admin user only when running directly
+    init_db()
+    ensure_admin_exists()
     app.run(host="0.0.0.0", port=5001, debug=True)
