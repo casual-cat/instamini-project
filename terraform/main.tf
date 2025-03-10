@@ -88,6 +88,7 @@ resource "google_container_node_pool" "primary_nodes" {
     machine_type = "e2-standard-2"
     disk_size_gb = 50
     oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+    image_type   = "COS_CONTAINERD"
 
     # If you run into the "At least one of ... must be specified" error,
     # add one of these:

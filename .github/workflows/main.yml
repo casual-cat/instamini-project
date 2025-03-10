@@ -11,15 +11,18 @@ jobs:
   build-test-deploy:
     runs-on: ubuntu-latest
     env:
-      # This environment variable makes the service account key available for all steps.
       GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
 
     steps:
-      # 1) Check out the code
+      ############################################################
+      # 1) Checkout Code
+      ############################################################
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      ############################################################
       # 2) Debug listing
+      ############################################################
       - name: List repository structure (debug)
         run: |
           echo "Listing root directory:"
@@ -27,7 +30,9 @@ jobs:
           echo "Listing contents of 'terraform' folder:"
           ls -la terraform || echo "'terraform' folder not found"
 
+      ############################################################
       # 3) Install Dependencies
+      ############################################################
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -73,16 +78,18 @@ jobs:
           pip3 install --upgrade pip
           pip3 install -r requirements.txt || true
 
+      ############################################################
       # 4) GCP Auth
+      ############################################################
       - name: GCP Auth
         run: |
-          # Write the service account key to a file in the workspace
-          # so it persists across steps.
           echo '${{ secrets.GCP_SA_KEY }}' | base64 --decode > $GITHUB_WORKSPACE/gcp-key.json
           gcloud auth activate-service-account --key-file=$GITHUB_WORKSPACE/gcp-key.json
           gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
 
-      # 5) Terraform Import Keyring (optional)
+      ############################################################
+      # 5) Try-Import Existing KMS Key Ring (Optional)
+      ############################################################
       - name: Terraform Import Keyring
         run: |
           cd terraform
@@ -90,9 +97,11 @@ jobs:
                          -backend-config="prefix=terraform/state"
           terraform import google_kms_key_ring.vault_ring \
             projects/instsmini-auto/locations/us-central1/keyRings/vault-ha-keyring \
-            || echo "KeyRing already imported or does not exist"
+            || echo "KeyRing doesn't exist or already imported"
 
-      # 6) Test Python App (Optional)
+      ############################################################
+      # 6) (Optional) Test Python App
+      ############################################################
       - name: Test Python App
         env:
           MYSQL_HOST: ${{ secrets.MYSQL_HOST }}
@@ -104,9 +113,24 @@ jobs:
           python3 -m unittest discover -s tests
 
       ############################################################
-      # 7A) Terraform: Create Only the Cluster + Node Pool
+      # 7A) Check if GKE cluster already exists
+      ############################################################
+      - name: Check if cluster exists
+        id: clustercheck
+        run: |
+          EXISTING=$(gcloud container clusters list \
+            --filter="name=vault-ha-cluster" --format="value(name)" || true)
+          if [ "$EXISTING" == "vault-ha-cluster" ]; then
+            echo "cluster_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "cluster_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      ############################################################
+      # 7B) Conditionally Create Cluster + Node Pool
       ############################################################
       - name: Terraform Apply (Create Cluster)
+        if: steps.clustercheck.outputs.cluster_exists == 'false'
         env:
           TF_VAR_gcp_project: ${{ secrets.GCP_PROJECT_ID }}
           TF_VAR_gcp_region: ${{ secrets.GCP_REGION }}
@@ -126,7 +150,7 @@ jobs:
             -auto-approve
 
       ############################################################
-      # 7B) Configure Kubeconfig after cluster creation
+      # 7C) Update Kubeconfig (in case cluster created or already existed)
       ############################################################
       - name: Configure Kubeconfig
         run: |
@@ -135,7 +159,7 @@ jobs:
             --project ${{ secrets.GCP_PROJECT_ID }}
 
       ############################################################
-      # 7C) Terraform: Deploy KMS, Vault, etc.
+      # 7D) Terraform Apply (KMS + Vault, etc.)
       ############################################################
       - name: Terraform Apply (KMS + Vault)
         env:
@@ -151,7 +175,9 @@ jobs:
           cd terraform
           terraform apply -auto-approve
 
+      ############################################################
       # 8) Create Kubernetes MySQL Secret
+      ############################################################
       - name: Create Kubernetes MySQL Secret
         run: |
           gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
@@ -163,7 +189,9 @@ jobs:
             --from-literal=MYSQL_PASS=${{ secrets.MYSQL_PASS }} \
             --from-literal=MYSQL_DB=${{ secrets.MYSQL_DB }}
 
+      ############################################################
       # 9) Docker Build & Push
+      ############################################################
       - name: Docker Build & Push
         uses: docker/build-push-action@v2
         with:
@@ -176,12 +204,16 @@ jobs:
           DOCKER_LOGIN_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKER_LOGIN_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-      # 10) Configure kubectl (again, just to be safe)
-      - name: Configure kubectl
+      ############################################################
+      # 10) Re-Configure kubectl
+      ############################################################
+      - name: Configure kubectl (again)
         run: |
           gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
 
+      ############################################################
       # 11) Install Argo CD & Create App
+      ############################################################
       - name: Install Argo CD & Create App
         run: |
           kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
@@ -195,10 +227,7 @@ jobs:
           kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd
 
           ARGOCD_PW=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-          argocd login argocd-server.argocd.svc.cluster.local:443 \
-            --username admin \
-            --password "$ARGOCD_PW" \
-            --insecure --grpc-web
+          argocd login argocd-server.argocd.svc.cluster.local:443 --username admin --password "$ARGOCD_PW" --insecure --grpc-web
 
           argocd app create instamini \
             --repo https://github.com/casual-cat/instamini-project.git \
@@ -216,7 +245,9 @@ jobs:
           argocd app sync instamini --insecure --grpc-web
           argocd app wait instamini --sync --health --timeout=300 --insecure --grpc-web
 
+      ############################################################
       # 12) Print External IP
+      ############################################################
       - name: Print External IP
         run: |
           for i in {1..10}; do
