@@ -11,7 +11,6 @@ jobs:
   build-test-deploy:
     runs-on: ubuntu-latest
     env:
-      # Provide the service account key to all steps
       GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
 
     steps:
@@ -39,7 +38,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y apt-transport-https ca-certificates gnupg curl jq unzip python3-pip
 
-          # Terraform
+          # Install Terraform
           TF_VERSION="1.4.6"
           curl -sSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o terraform.zip
           rm -rf tfbin
@@ -50,36 +49,36 @@ jobs:
           rm -rf tfbin terraform.zip
           terraform -version
 
-          # Google Cloud CLI
+          # Install Google Cloud CLI
           echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee /etc/apt/sources.list.d/cloud-sdk.list
           curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
           sudo apt-get update && sudo apt-get install -y google-cloud-cli
 
-          # kubectl
+          # Install kubectl
           sudo apt-get install -y kubectl
 
-          # gke-gcloud-auth-plugin
+          # Install gke-gcloud-auth-plugin
           sudo apt-get install -y google-cloud-sdk-gke-gcloud-auth-plugin
 
-          # helm
+          # Install helm
           HELM_VERSION="v3.12.0"
           curl -sSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o helm.tar.gz
           tar xvf helm.tar.gz
           sudo mv linux-amd64/helm /usr/local/bin/helm
 
-          # Vault CLI
+          # Install Vault CLI
           VAULT_VERSION="1.14.2"
           curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" -o vault.zip
           unzip vault.zip
           sudo mv vault /usr/local/bin/
           vault version
 
-          # Python deps
+          # Install Python dependencies
           pip3 install --upgrade pip
           pip3 install -r requirements.txt || true
 
       ############################################################
-      # 4) GCP Auth
+      # 4) GCP Authentication
       ############################################################
       - name: GCP Auth
         run: |
