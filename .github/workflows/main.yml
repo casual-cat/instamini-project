@@ -230,10 +230,12 @@ jobs:
           kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd
 
           ARGOCD_PW=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-          argocd login argocd-server.argocd.svc.cluster.local:443 \
-            --username admin \
-            --password "$ARGOCD_PW" \
-            --insecure --grpc-web
+          
+          # Port-forward the ArgoCD service
+          kubectl port-forward svc/argocd-server -n argocd 8080:443 &
+          sleep 5  # Allow some time for the port-forward to be set up
+
+          argocd login localhost:8080 --username admin --password "$ARGOCD_PW" --insecure --grpc-web
 
           argocd app create instamini \
             --repo https://github.com/casual-cat/instamini-project.git \
