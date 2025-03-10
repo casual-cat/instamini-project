@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-init-job
+  namespace: vault
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: vault-admin-sa
+      restartPolicy: Never
+      containers:
+      - name: vault-init
+        image: hashicorp/vault:1.14.2
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            set -euo pipefail
+            echo "Running inside cluster. Configuring Vault K8S auth..."
+            
+            # Because you installed Vault with a LoadBalancer, you can either
+            # talk to it via the LB address or the ClusterIP. For example:
+            #  LB version:  export VAULT_ADDR="http://vault.vault.svc:8200"
+            # or if you REALLY want the LB IP (your call):
+            #  export VAULT_ADDR="http://<EXTERNAL_IP>:8200"
+            #
+            # Usually to avoid leaving cluster, we can talk to the cluster service:
+            export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+
+            # (Optional) If you still have your root token (in a secret?):
+            # vault login <ROOT_TOKEN>
+            # or skip if Vault doesn't require it.
+            
+            # 1) Enable K8S auth if not exists
+            vault auth enable kubernetes || true
+            
+            # 2) Actually configure it with the real in-cluster token
+            vault write auth/kubernetes/config \
+              token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+              kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+              kubernetes_host="https://kubernetes.default.svc.cluster.local:443"
+
+            echo "Kubernetes auth config done!"

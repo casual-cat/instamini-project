@@ -1,6 +1,6 @@
 ##############################################################
 # main.tf - GKE + Vault auto-unseal referencing an existing
-# Cloud SQL instance for your app.
+# Cloud SQL instance, skipping the in-line K8S Auth config.
 ##############################################################
 
 terraform {
@@ -37,25 +37,20 @@ provider "google" {
   project = var.gcp_project
   region  = var.gcp_region
   zone    = var.gcp_zone
-  # Credentials are provided via the GOOGLE_APPLICATION_CREDENTIALS
-  # environment variable (or via gcloud auth).
+  # Credentials come from GOOGLE_APPLICATION_CREDENTIALS or gcloud
 }
 
 provider "kubernetes" {
-  host = "https://${google_container_cluster.primary.endpoint}"
-  cluster_ca_certificate = base64decode(
-    google_container_cluster.primary.master_auth.0.cluster_ca_certificate
-  )
-  token = data.google_client_config.default.access_token
+  host                   = "https://${google_container_cluster.primary.endpoint}"
+  cluster_ca_certificate = base64decode(google_container_cluster.primary.master_auth.0.cluster_ca_certificate)
+  token                  = data.google_client_config.default.access_token
 }
 
 provider "helm" {
   kubernetes {
-    host = "https://${google_container_cluster.primary.endpoint}"
-    cluster_ca_certificate = base64decode(
-      google_container_cluster.primary.master_auth.0.cluster_ca_certificate
-    )
-    token = data.google_client_config.default.access_token
+    host                   = "https://${google_container_cluster.primary.endpoint}"
+    cluster_ca_certificate = base64decode(google_container_cluster.primary.master_auth.0.cluster_ca_certificate)
+    token                  = data.google_client_config.default.access_token
   }
 }
 
@@ -91,7 +86,6 @@ resource "google_container_node_pool" "primary_nodes" {
     image_type   = "COS_CONTAINERD"
   }
 
-  # Ignore ephemeral changes GCP tries to force, so we don't get the 400 error
   lifecycle {
     ignore_changes = [
       node_config[0].resource_labels,
@@ -148,8 +142,9 @@ resource "helm_release" "vault" {
   version          = "0.23.0"
   create_namespace = false
 
+  # Ensure vault-values.yaml sets: server.service.type = "LoadBalancer"
   values = [
-    file("${path.module}/vault-values.yaml")  # <= Set 'service.type=LoadBalancer'
+    file("${path.module}/vault-values.yaml")
   ]
 
   depends_on = [
@@ -161,7 +156,7 @@ resource "helm_release" "vault" {
 }
 
 ##################################
-# 4) Auto-Init Vault & Configure DB Secrets
+# 4) Auto-Init Vault & Configure DB Secrets (no K8S auth config)
 ##################################
 resource "random_password" "vault_root_token" {
   length  = 32
@@ -203,10 +198,10 @@ resource "null_resource" "vault_init_and_config" {
       export VAULT_ADDR="http://$EXTERNAL_IP:8200"
       echo "Using VAULT_ADDR=$VAULT_ADDR"
 
-      echo "Waiting for Vault to become available at $VAULT_ADDR..."
+      echo "Waiting for Vault to become available..."
       RETRY=0
       until curl -s $VAULT_ADDR/v1/sys/health; do
-        echo "Vault not available, retrying in 5 seconds..."
+        echo "Vault not available, retrying in 5s..."
         sleep 5
         RETRY=$((RETRY+1))
         if [ $RETRY -ge 6 ]; then
@@ -232,13 +227,7 @@ resource "null_resource" "vault_init_and_config" {
         vault login -address=$VAULT_ADDR "${random_password.vault_root_token.result}"
       fi
 
-      echo "Enabling Kubernetes auth method..."
-      vault auth enable -address=$VAULT_ADDR kubernetes || true
-
-      vault write -address=$VAULT_ADDR auth/kubernetes/config \
-        kubernetes_host="https://kubernetes.default.svc.cluster.local:443" \
-        token_reviewer_jwt="$(cat /run/secrets/kubernetes.io/serviceaccount/token)" \
-        kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      # We do NOT configure K8S auth here, so no reference to /run/secrets
 
       echo "Enabling database secrets engine..."
       vault secrets enable -address=$VAULT_ADDR database || true
@@ -248,21 +237,19 @@ resource "null_resource" "vault_init_and_config" {
       DB_USER="root"
       DB_PASS="${var.db_root_password}"
 
-      # Configure the database connection
       vault write -address=$VAULT_ADDR database/config/my-sql-db \
         plugin_name="mysql-legacy-database-plugin" \
         connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME"')/' \
         username="$DB_USER" \
         password="$DB_PASS"
 
-      # Create a role for generating dynamic credentials
       vault write -address=$VAULT_ADDR database/roles/my-app-role \
         db_name="my-sql-db" \
         creation_statements="CREATE USER '{{name}}'@'%' IDENTIFIED BY '{{password}}'; GRANT ALL PRIVILEGES ON *.* TO '{{name}}'@'%';" \
         default_ttl="1h" \
         max_ttl="24h"
 
-      echo "Vault auto-initialization complete."
+      echo "Vault auto-init & DB config complete (K8S Auth is next in the job)."
     EOF
   }
 }

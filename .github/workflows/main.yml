@@ -11,12 +11,11 @@ jobs:
   build-test-deploy:
     runs-on: ubuntu-latest
     env:
-      # This environment variable makes the service account key available for all steps.
       GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
 
     steps:
       ############################################################
-      # 1) Checkout Code
+      # 1) Check out code
       ############################################################
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -60,7 +59,7 @@ jobs:
           # kubectl
           sudo apt-get install -y kubectl
 
-          # IMPORTANT: install the gke-gcloud-auth-plugin so kubectl can authenticate
+          # install the gke-gcloud-auth-plugin
           sudo apt-get install -y google-cloud-sdk-gke-gcloud-auth-plugin
 
           # helm
@@ -92,7 +91,7 @@ jobs:
           gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
 
       ############################################################
-      # 5) Try-Import Existing KMS Key Ring (Optional)
+      # 5) Terraform Import KeyRing (Optional)
       ############################################################
       - name: Terraform Import Keyring
         run: |
@@ -154,7 +153,7 @@ jobs:
             -auto-approve
 
       ############################################################
-      # 7C) Update Kubeconfig (in case cluster created or already existed)
+      # 7C) Update Kubeconfig
       ############################################################
       - name: Configure Kubeconfig
         run: |
@@ -180,7 +179,7 @@ jobs:
           terraform apply -auto-approve
 
       ############################################################
-      # 8) Create Kubernetes MySQL Secret
+      # 8) Create MySQL Secret
       ############################################################
       - name: Create Kubernetes MySQL Secret
         run: |
@@ -213,7 +212,9 @@ jobs:
       ############################################################
       - name: Configure kubectl (again)
         run: |
-          gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
+          gcloud container clusters get-credentials vault-ha-cluster \
+            --zone ${{ secrets.GCP_ZONE }} \
+            --project ${{ secrets.GCP_PROJECT_ID }}
 
       ############################################################
       # 11) Install Argo CD & Create App
@@ -268,3 +269,36 @@ jobs:
           done
           echo "No external IP assigned after 10 tries."
           exit 1
+
+      ############################################################
+      # 13) (Optional) Create the K8S SA & CRB + Vault-Init Job
+      ############################################################
+      - name: Configure Vault K8S Auth
+        run: |
+          # 13a) Create the SA & clusterrolebinding
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: vault-admin-sa
+            namespace: vault
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata:
+            name: vault-admin-sa-crb
+          subjects:
+          - kind: ServiceAccount
+            name: vault-admin-sa
+            namespace: vault
+          roleRef:
+            kind: ClusterRole
+            name: system:auth-delegator
+            apiGroup: rbac.authorization.k8s.io
+          EOF
+
+          # 13b) Now apply your vault-init-job.yaml (which sets token_reviewer_jwt)
+          kubectl apply -f vault-init-job.yaml -n vault
+
+          # 13c) Wait for completion
+          kubectl wait --for=condition=complete job/vault-init-job -n vault --timeout=180s
