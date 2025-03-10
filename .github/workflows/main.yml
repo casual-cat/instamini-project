@@ -11,6 +11,7 @@ jobs:
   build-test-deploy:
     runs-on: ubuntu-latest
     env:
+      # Provide the service account key to all steps
       GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
       TF_VAR_vault_gcp_sa_key_b64: ${{ secrets.vault_gcp_sa_key_b64 }}
       TF_VAR_db_root_password: ${{ secrets.db_root_password }}
@@ -40,15 +41,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y apt-transport-https ca-certificates gnupg curl jq unzip python3-pip
 
-          # Install Terraform using the official setup-terraform GitHub Action
-          - name: Set up Terraform
-            uses: hashicorp/setup-terraform@v2
-            with:
-              terraform_version: 1.4.6
-
+          # Terraform
+          TF_VERSION="1.4.6"
+          curl -sSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o terraform.zip
+          rm -rf tfbin
+          unzip -o terraform.zip -d tfbin
+          sudo mv tfbin/terraform /usr/local/bin/terraform
+          sudo chmod +x /usr/local/bin/terraform
+          export PATH="/usr/local/bin:$PATH"
+          rm -rf tfbin terraform.zip
           terraform -version
 
-          # Install Google Cloud CLI
+          # Google Cloud CLI
           echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee /etc/apt/sources.list.d/cloud-sdk.list
           curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
           sudo apt-get update && sudo apt-get install -y google-cloud-cli
