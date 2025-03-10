@@ -296,6 +296,7 @@ resource "null_resource" "vault_init_and_config" {
         connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME:3306"')/' \
         username="$DB_USER" \
         password="$DB_PASS"
+        allowed_roles="my-app-role"
 
       vault write database/roles/my-app-role \
         db_name="my-sql-db" \
