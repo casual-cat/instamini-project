@@ -1,25 +1,44 @@
 server:
+  # Vault configuration block (in HCL format)
   config: |
     ui = true
+
     listener "tcp" {
       address     = "0.0.0.0:8200"
       tls_disable = true
     }
+
     storage "file" {
       path = "/vault/data"
     }
+
     seal "gcpckms" {
       project     = "instsmini-auto"
       region      = "us-central1"
       key_ring    = "vault-ha-keyring"
       crypto_key  = "vault-auto-unseal"
     }
+
+  # Service configuration: expose Vault via a LoadBalancer with a static IP.
   service:
     type: LoadBalancer
+    annotations:
+      cloud.google.com/load-balancer-type: "External"
+    # Replace the value below with your reserved static IP (e.g., from the commands above)
+    loadBalancerIP: "34.58.54.154"
 
+  # Persistent storage settings ensure that Vault's data is retained even if the pod restarts.
+  dataStorage:
+    enabled: true
+    storageClass: "standard"    # Adjust if you use a different GKE storage class
+    accessMode: ReadWriteOnce
+    size: 10Gi
+
+  # Extra environment variables to configure Vault for auto-unseal using GCP.
   extraEnvironmentVars:
     GOOGLE_APPLICATION_CREDENTIALS: "/etc/vault/key.json"
 
+  # Mount the Kubernetes secret (named "gcp-key") containing your GCP service account key.
   volumes:
     - name: gcp-key
       secret:
@@ -30,5 +49,6 @@ server:
       mountPath: /etc/vault
       readOnly: true
 
+  # Optionally, enable the Vault Injector (if you plan to inject secrets into other pods).
   injector:
     enabled: true
