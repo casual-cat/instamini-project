@@ -1,7 +1,7 @@
 ##############################################################
 # main.tf
 # Deploys a GKE cluster, Vault with GCP KMS auto-unseal,
-# and stores/retrieves Vault root token from Secret Manager.
+# and stores/retrieves Vault root token in Secret Manager.
 ##############################################################
 
 terraform {
@@ -34,18 +34,15 @@ terraform {
   }
 }
 
-############################################################
-# Providers
-############################################################
 provider "google" {
   project = var.gcp_project
   region  = var.gcp_region
   zone    = var.gcp_zone
-  # Credentials via GOOGLE_APPLICATION_CREDENTIALS or gcloud
+  # Credentials come from GOOGLE_APPLICATION_CREDENTIALS or gcloud.
 }
 
 provider "kubernetes" {
-  host = "https://${google_container_cluster.primary.endpoint}"
+  host                   = "https://${google_container_cluster.primary.endpoint}"
   cluster_ca_certificate = base64decode(
     google_container_cluster.primary.master_auth.0.cluster_ca_certificate
   )
@@ -67,6 +64,7 @@ data "google_client_config" "default" {}
 ############################################################
 # 1) GKE Cluster & Node Pool
 ############################################################
+
 resource "google_container_cluster" "primary" {
   name                     = "vault-ha-cluster"
   location                 = var.gcp_zone
@@ -94,6 +92,7 @@ resource "google_container_node_pool" "primary_nodes" {
     image_type   = "COS_CONTAINERD"
   }
 
+  # Ignores ephemeral changes
   lifecycle {
     ignore_changes = [
       node_config[0].resource_labels,
@@ -105,12 +104,12 @@ resource "google_container_node_pool" "primary_nodes" {
 ############################################################
 # 2) KMS Key Ring & Crypto Key
 ############################################################
+
 resource "google_kms_key_ring" "vault_ring" {
   name     = var.kms_key_ring
   project  = var.gcp_project
   location = var.gcp_region
 
-  # If the ring already exists, ignore or import
   lifecycle {
     ignore_changes = [name, project, location]
   }
@@ -123,8 +122,9 @@ resource "google_kms_crypto_key" "vault_key" {
 }
 
 ############################################################
-# 3) Deploy Vault via Helm (LoadBalancer service)
+# 3) Deploy Vault with auto-unseal
 ############################################################
+
 resource "kubernetes_namespace" "vault_ns" {
   metadata {
     name = "vault"
@@ -141,6 +141,8 @@ resource "kubernetes_secret" "vault_gcp_key" {
   }
 }
 
+# Helm chart: ensure your `vault-values.yaml` sets:
+# server.service.type = "LoadBalancer"
 resource "helm_release" "vault" {
   name             = "vault"
   namespace        = kubernetes_namespace.vault_ns.metadata[0].name
@@ -149,7 +151,6 @@ resource "helm_release" "vault" {
   version          = "0.23.0"
   create_namespace = false
 
-  # See vault-values.yaml with service.type=LoadBalancer, etc.
   values = [
     file("${path.module}/vault-values.yaml")
   ]
@@ -163,19 +164,22 @@ resource "helm_release" "vault" {
 }
 
 ############################################################
-# 4) Secret Manager - we'll store the stable root token
+# 4) Create Secret in GCP Secret Manager for stable root token
 ############################################################
+
 resource "google_secret_manager_secret" "root_token_secret" {
   name    = "vault-root-token"
   project = var.gcp_project
+
   replication {
     automatic = true
   }
 }
 
 ############################################################
-# 5) Vault auto-init & DB Secrets config
+# 5) Vault auto-init & store token in Secret Manager
 ############################################################
+
 resource "random_password" "vault_root_token" {
   length  = 32
   special = true
@@ -209,7 +213,7 @@ resource "null_resource" "vault_init_and_config" {
           echo "Vault LB IP: $EXTERNAL_IP"
           break
         else
-          echo "No external IP yet. Sleep 10..."
+          echo "No external IP yet. Sleeping 10s..."
           sleep 10
         fi
       done
@@ -222,7 +226,7 @@ resource "null_resource" "vault_init_and_config" {
       export VAULT_ADDR="http://$EXTERNAL_IP:8200"
       echo "[Vault-Init] VAULT_ADDR=$VAULT_ADDR"
 
-      # Wait for readiness
+      # Wait for Vault readiness
       RETRY=0
       until curl -s $VAULT_ADDR/v1/sys/health; do
         echo "Vault not ready, sleeping 5..."
@@ -234,66 +238,66 @@ resource "null_resource" "vault_init_and_config" {
         fi
       done
 
-      # Attempt to read existing token from GSM
-      echo "[Vault-Init] Checking if Vault is already initialized..."
+      # Attempt to retrieve existing token from Secret Manager
+      echo "[Vault-Init] Checking if Vault is already init..."
       set +e
-      EX_SECRET=$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="$GCP_PROJECT" 2>/dev/null)
-      GOT_SECRET=$?
+      EXISTING_TOKEN=$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="$GCP_PROJECT" 2>/dev/null)
+      TOKEN_STATUS=$?
       set -e
 
-      if vault status -address=$VAULT_ADDR 2>/dev/null | grep -q 'Initialized.*true'; then
+      if vault status 2>/dev/null | grep -q 'Initialized.*true'; then
         echo "[Vault-Init] Vault is already initialized."
-        if [ $GOT_SECRET -eq 0 ] && [ -n "$EX_SECRET" ]; then
+        if [ $TOKEN_STATUS -eq 0 ] && [ -n "$EXISTING_TOKEN" ]; then
           echo "[Vault-Init] Logging in with existing root token from GSM..."
-          vault login -address=$VAULT_ADDR "$EX_SECRET" || {
-            echo "ERROR: existing token from GSM is invalid. Exiting."
+          vault login "$EXISTING_TOKEN" || {
+            echo "ERROR: existing token in GSM is invalid."
             exit 1
           }
         else
-          echo "ERROR: Vault is init, but no stored token. Exiting."
+          echo "ERROR: Vault is init but no stored root token in GSM. Exiting."
           exit 1
         fi
       else
-        echo "[Vault-Init] Vault not init. Doing operator init now..."
+        echo "[Vault-Init] Vault is not init. Doing operator init now..."
 
-        INIT_OUT=$(vault operator init -key-shares=1 -key-threshold=1 -format=json -address=$VAULT_ADDR)
+        INIT_OUT=$(vault operator init -key-shares=1 -key-threshold=1 -format=json)
         UNSEAL_KEY=$(echo "$INIT_OUT" | jq -r .unseal_keys_b64[0])
         ROOT_TOKEN=$(echo "$INIT_OUT" | jq -r .root_token)
 
-        vault operator unseal -address=$VAULT_ADDR "$UNSEAL_KEY"
-        vault login -address=$VAULT_ADDR "$ROOT_TOKEN"
+        vault operator unseal "$UNSEAL_KEY"
+        vault login "$ROOT_TOKEN"
 
         echo "[Vault-Init] Creating stable root token: ${random_password.vault_root_token.result}"
-        vault token create -id="${random_password.vault_root_token.result}" -policy="root" -ttl=87600h -address=$VAULT_ADDR
+        vault token create -id="${random_password.vault_root_token.result}" -policy="root" -ttl=87600h
 
         echo "[Vault-Init] Logging in with stable root token..."
-        vault login -address=$VAULT_ADDR "${random_password.vault_root_token.result}"
+        vault login "${random_password.vault_root_token.result}"
 
         echo "[Vault-Init] Storing stable root token in GCP Secret Manager..."
         echo -n "${random_password.vault_root_token.result}" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT"
       fi
 
       echo "[Vault-Init] Enable database secrets engine..."
-      vault secrets enable -address=$VAULT_ADDR database || true
+      vault secrets enable database || true
 
       echo "[Vault-Init] Config DB secrets..."
       INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_name}" --project "${var.gcp_project}" --format='value(connectionName)')
       DB_USER="root"
       DB_PASS="${var.db_root_password}"
 
-      vault write -address=$VAULT_ADDR database/config/my-sql-db \
+      vault write database/config/my-sql-db \
         plugin_name="mysql-legacy-database-plugin" \
         connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME"')/' \
         username="$DB_USER" \
         password="$DB_PASS"
 
-      vault write -address=$VAULT_ADDR database/roles/my-app-role \
+      vault write database/roles/my-app-role \
         db_name="my-sql-db" \
         creation_statements="CREATE USER '{{name}}'@'%' IDENTIFIED BY '{{password}}'; GRANT ALL PRIVILEGES ON *.* TO '{{name}}'@'%';" \
         default_ttl="1h" \
         max_ttl="24h"
 
-      echo "[Vault-Init] Done! The stable root token is in Secret Manager now."
+      echo "[Vault-Init] Done. Root token now stored in Secret Manager."
     SCRIPT
   }
 }
@@ -301,12 +305,14 @@ resource "null_resource" "vault_init_and_config" {
 ############################################################
 # Outputs
 ############################################################
+
 output "cluster_name" {
-  value = google_container_cluster.primary.name
+  description = "Name of the GKE cluster"
+  value       = google_container_cluster.primary.name
 }
 
 output "vault_root_token" {
-  description = "Random stable root token we assign"
+  description = "The stable root token (randomly generated in TF)."
   value       = random_password.vault_root_token.result
   sensitive   = true
 }
