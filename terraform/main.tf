@@ -37,7 +37,8 @@ provider "google" {
   project = var.gcp_project
   region  = var.gcp_region
   zone    = var.gcp_zone
-  # Credentials are provided via the GOOGLE_APPLICATION_CREDENTIALS environment variable.
+  # Credentials are provided via the GOOGLE_APPLICATION_CREDENTIALS
+  # environment variable (or via gcloud auth).
 }
 
 provider "kubernetes" {
@@ -87,6 +88,11 @@ resource "google_container_node_pool" "primary_nodes" {
     machine_type = "e2-standard-2"
     disk_size_gb = 50
     oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+
+    # If you run into the "At least one of ... must be specified" error,
+    # add one of these:
+    # image_type = "COS_CONTAINERD"
+    # node_version = "1.25.12-gke.2300"
   }
 }
 
@@ -98,6 +104,8 @@ resource "google_kms_key_ring" "vault_ring" {
   project  = var.gcp_project
   location = var.gcp_region
 
+  # If the key ring already exists, you may want to import it
+  # or keep the lifecycle block to avoid re-creation conflicts.
   lifecycle {
     ignore_changes = [name, project, location]
   }
@@ -106,7 +114,7 @@ resource "google_kms_key_ring" "vault_ring" {
 resource "google_kms_crypto_key" "vault_key" {
   name            = var.kms_crypto_key
   key_ring        = google_kms_key_ring.vault_ring.id
-  rotation_period = "7776000s"  # 90 days
+  rotation_period = "7776000s" # 90 days
   depends_on      = [google_kms_key_ring.vault_ring]
 }
 
@@ -125,10 +133,15 @@ resource "kubernetes_secret" "vault_gcp_key" {
     namespace = kubernetes_namespace.vault_ns.metadata[0].name
   }
   data = {
+    # This is your base64-encoded GCP SA JSON for Vault auto-unseal
     "key.json" = var.vault_gcp_sa_key_b64
   }
 }
 
+# For a LoadBalancer service, your vault-values.yaml might have:
+# server:
+#   service:
+#     type: LoadBalancer
 resource "helm_release" "vault" {
   name             = "vault"
   namespace        = kubernetes_namespace.vault_ns.metadata[0].name
@@ -150,7 +163,7 @@ resource "helm_release" "vault" {
 }
 
 ##################################
-# 4) Auto-Initialize Vault & Configure DB Secrets
+# 4) (Optional) Auto-Init Vault & Configure DB Secrets
 ##################################
 resource "random_password" "vault_root_token" {
   length  = 32
