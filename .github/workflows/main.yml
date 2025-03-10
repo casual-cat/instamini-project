@@ -88,7 +88,7 @@ jobs:
           gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
 
       ############################################################
-      # 5) Terraform Import Keyring (Optional)
+      # 5) Terraform Import KeyRing (Optional)
       ############################################################
       - name: Terraform Import Keyring
         run: |
@@ -187,6 +187,7 @@ jobs:
       ############################################################
       # 9) Login to Docker Hub & Build/Push
       ############################################################
+      # (FIX) Added the "docker/login-action" step first
       - name: Login to DockerHub
         uses: docker/login-action@v2
         with:
@@ -210,35 +211,23 @@ jobs:
           gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
 
       ############################################################
-      # 11) Install Argo CD & Create App with Port Forwarding
+      # 11) Install Argo CD & Create App
       ############################################################
       - name: Install Argo CD & Create App
         run: |
-          # Create the Argo CD namespace and install Argo CD
           kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
           kubectl rollout status deployment argocd-server -n argocd --timeout=300s
 
-          # Download and install the Argo CD CLI
           curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
           chmod +x argocd
           sudo mv argocd /usr/local/bin/argocd
 
-          # Wait until the Argo CD server is available
           kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd
 
-          # Start port-forwarding Argo CD service to localhost:8080 in the background
-          kubectl port-forward svc/argocd-server -n argocd 8080:443 &
-          sleep 10  # Wait for port-forwarding to be established
-
-          # Retrieve the Argo CD initial admin password from the secret
           ARGOCD_PW=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-          echo "Retrieved Argo CD password from Kubernetes secret."
+          argocd login argocd-server.argocd.svc.cluster.local:443 --username admin --password "$ARGOCD_PW" --insecure --grpc-web
 
-          # Login to Argo CD using the local forwarded port
-          argocd login localhost:8080 --username admin --password "$ARGOCD_PW" --insecure --grpc-web
-
-          # Create (or update) the Argo CD application
           argocd app create instamini \
             --repo https://github.com/casual-cat/instamini-project.git \
             --path helm/instamini \
@@ -251,7 +240,6 @@ jobs:
             --insecure \
             --grpc-web
 
-          # Wait for and sync the application
           argocd app wait instamini --operation --timeout=300 --insecure --grpc-web
           argocd app sync instamini --insecure --grpc-web
           argocd app wait instamini --sync --health --timeout=300 --insecure --grpc-web
