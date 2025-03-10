@@ -1,4 +1,5 @@
 server:
+  # Vault configuration file (merged into /vault/config/vault.hcl)
   config: |
     ui = true
     listener "tcp" {
@@ -8,18 +9,24 @@ server:
     storage "file" {
       path = "/vault/data"
     }
+    # GCP KMS auto-unseal config
     seal "gcpckms" {
       project     = "instsmini-auto"
       region      = "us-central1"
       key_ring    = "vault-ha-keyring"
       crypto_key  = "vault-auto-unseal"
     }
+
+  # Expose Vault externally (LoadBalancer), so Terraform’s null_resource script can find a public IP
   service:
     type: LoadBalancer
 
+  # If your GCP credentials are loaded from a Secret named "gcp-key"
+  # and you want Vault to see GOOGLE_APPLICATION_CREDENTIALS
   extraEnvironmentVars:
     GOOGLE_APPLICATION_CREDENTIALS: "/etc/vault/key.json"
 
+  # Mount the GCP key secret so Vault can read it
   volumes:
     - name: gcp-key
       secret:
@@ -30,5 +37,6 @@ server:
       mountPath: /etc/vault
       readOnly: true
 
-  injector: 
-    enabled: true 
+  # Enable the Vault Agent Injector (for injecting secrets into pods)
+  injector:
+    enabled: true
