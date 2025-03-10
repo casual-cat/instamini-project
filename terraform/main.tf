@@ -90,15 +90,16 @@ resource "google_container_node_pool" "primary_nodes" {
     oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
     image_type   = "COS_CONTAINERD"
   }
+
+  # Ignore ephemeral changes GCP tries to force, so we don't get the 400 error
   lifecycle {
-    # ignore ephemeral changes that cause GCP to demand a real field
     ignore_changes = [
-      # Based on your plan output, these are typical:
       node_config[0].resource_labels,
-      node_config[0].kubelet_config
+      node_config[0].kubelet_config,
     ]
   }
 }
+
 ##################################
 # 2) Create KMS Key Ring & Key for Vault Auto-Unseal
 ##################################
@@ -107,8 +108,7 @@ resource "google_kms_key_ring" "vault_ring" {
   project  = var.gcp_project
   location = var.gcp_region
 
-  # If the key ring already exists, you may want to import it
-  # or keep the lifecycle block to avoid re-creation conflicts.
+  # If it already exists, we import or ignore changes
   lifecycle {
     ignore_changes = [name, project, location]
   }
@@ -136,15 +136,10 @@ resource "kubernetes_secret" "vault_gcp_key" {
     namespace = kubernetes_namespace.vault_ns.metadata[0].name
   }
   data = {
-    # This is your base64-encoded GCP SA JSON for Vault auto-unseal
     "key.json" = var.vault_gcp_sa_key_b64
   }
 }
 
-# For a LoadBalancer service, your vault-values.yaml might have:
-# server:
-#   service:
-#     type: LoadBalancer
 resource "helm_release" "vault" {
   name             = "vault"
   namespace        = kubernetes_namespace.vault_ns.metadata[0].name
@@ -154,7 +149,7 @@ resource "helm_release" "vault" {
   create_namespace = false
 
   values = [
-    file("${path.module}/vault-values.yaml")
+    file("${path.module}/vault-values.yaml")  # <= Set 'service.type=LoadBalancer'
   ]
 
   depends_on = [
@@ -166,7 +161,7 @@ resource "helm_release" "vault" {
 }
 
 ##################################
-# 4) (Optional) Auto-Init Vault & Configure DB Secrets
+# 4) Auto-Init Vault & Configure DB Secrets
 ##################################
 resource "random_password" "vault_root_token" {
   length  = 32
@@ -240,9 +235,9 @@ resource "null_resource" "vault_init_and_config" {
       echo "Enabling Kubernetes auth method..."
       vault auth enable -address=$VAULT_ADDR kubernetes || true
 
-      vault write -address=$VAULT_ADDR auth/kubernetes/config \\
-        kubernetes_host="https://kubernetes.default.svc.cluster.local:443" \\
-        token_reviewer_jwt="$(cat /run/secrets/kubernetes.io/serviceaccount/token)" \\
+      vault write -address=$VAULT_ADDR auth/kubernetes/config \
+        kubernetes_host="https://kubernetes.default.svc.cluster.local:443" \
+        token_reviewer_jwt="$(cat /run/secrets/kubernetes.io/serviceaccount/token)" \
         kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 
       echo "Enabling database secrets engine..."
@@ -252,16 +247,19 @@ resource "null_resource" "vault_init_and_config" {
       INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_name}" --project "${var.gcp_project}" --format 'value(connectionName)')
       DB_USER="root"
       DB_PASS="${var.db_root_password}"
-      vault write -address=$VAULT_ADDR database/config/my-sql-db \\
-        plugin_name="mysql-legacy-database-plugin" \\
-        connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME"')/' \\
-        username="$DB_USER" \\
+
+      # Configure the database connection
+      vault write -address=$VAULT_ADDR database/config/my-sql-db \
+        plugin_name="mysql-legacy-database-plugin" \
+        connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME"')/' \
+        username="$DB_USER" \
         password="$DB_PASS"
 
-      vault write -address=$VAULT_ADDR database/roles/my-app-role \\
-        db_name="my-sql-db" \\
-        creation_statements="CREATE USER '{{name}}'@'%' IDENTIFIED BY '{{password}}'; GRANT ALL PRIVILEGES ON *.* TO '{{name}}'@'%';" \\
-        default_ttl="1h" \\
+      # Create a role for generating dynamic credentials
+      vault write -address=$VAULT_ADDR database/roles/my-app-role \
+        db_name="my-sql-db" \
+        creation_statements="CREATE USER '{{name}}'@'%' IDENTIFIED BY '{{password}}'; GRANT ALL PRIVILEGES ON *.* TO '{{name}}'@'%';" \
+        default_ttl="1h" \
         max_ttl="24h"
 
       echo "Vault auto-initialization complete."
