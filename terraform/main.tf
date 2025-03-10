@@ -90,8 +90,15 @@ resource "google_container_node_pool" "primary_nodes" {
     oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
     image_type   = "COS_CONTAINERD"
   }
+  lifecycle {
+    # ignore ephemeral changes that cause GCP to demand a real field
+    ignore_changes = [
+      # Based on your plan output, these are typical:
+      node_config[0].resource_labels,
+      node_config[0].kubelet_config
+    ]
+  }
 }
-
 ##################################
 # 2) Create KMS Key Ring & Key for Vault Auto-Unseal
 ##################################
