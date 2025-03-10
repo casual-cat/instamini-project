@@ -1,6 +1,7 @@
 ##############################################################
-# main.tf - GKE + Vault auto-unseal referencing an existing
-# Cloud SQL instance, skipping the in-line K8S Auth config.
+# main.tf
+# Deploys a GKE cluster, Vault with GCP KMS auto-unseal,
+# and stores/retrieves Vault root token from Secret Manager.
 ##############################################################
 
 terraform {
@@ -33,32 +34,39 @@ terraform {
   }
 }
 
+############################################################
+# Providers
+############################################################
 provider "google" {
   project = var.gcp_project
   region  = var.gcp_region
   zone    = var.gcp_zone
-  # Credentials come from GOOGLE_APPLICATION_CREDENTIALS or gcloud
+  # Credentials via GOOGLE_APPLICATION_CREDENTIALS or gcloud
 }
 
 provider "kubernetes" {
-  host                   = "https://${google_container_cluster.primary.endpoint}"
-  cluster_ca_certificate = base64decode(google_container_cluster.primary.master_auth.0.cluster_ca_certificate)
-  token                  = data.google_client_config.default.access_token
+  host = "https://${google_container_cluster.primary.endpoint}"
+  cluster_ca_certificate = base64decode(
+    google_container_cluster.primary.master_auth.0.cluster_ca_certificate
+  )
+  token = data.google_client_config.default.access_token
 }
 
 provider "helm" {
   kubernetes {
     host                   = "https://${google_container_cluster.primary.endpoint}"
-    cluster_ca_certificate = base64decode(google_container_cluster.primary.master_auth.0.cluster_ca_certificate)
-    token                  = data.google_client_config.default.access_token
+    cluster_ca_certificate = base64decode(
+      google_container_cluster.primary.master_auth.0.cluster_ca_certificate
+    )
+    token = data.google_client_config.default.access_token
   }
 }
 
 data "google_client_config" "default" {}
 
-##################################
-# 1) Create GKE Cluster
-##################################
+############################################################
+# 1) GKE Cluster & Node Pool
+############################################################
 resource "google_container_cluster" "primary" {
   name                     = "vault-ha-cluster"
   location                 = var.gcp_zone
@@ -94,15 +102,15 @@ resource "google_container_node_pool" "primary_nodes" {
   }
 }
 
-##################################
-# 2) Create KMS Key Ring & Key for Vault Auto-Unseal
-##################################
+############################################################
+# 2) KMS Key Ring & Crypto Key
+############################################################
 resource "google_kms_key_ring" "vault_ring" {
   name     = var.kms_key_ring
   project  = var.gcp_project
   location = var.gcp_region
 
-  # If it already exists, we import or ignore changes
+  # If the ring already exists, ignore or import
   lifecycle {
     ignore_changes = [name, project, location]
   }
@@ -112,12 +120,11 @@ resource "google_kms_crypto_key" "vault_key" {
   name            = var.kms_crypto_key
   key_ring        = google_kms_key_ring.vault_ring.id
   rotation_period = "7776000s" # 90 days
-  depends_on      = [google_kms_key_ring.vault_ring]
 }
 
-##################################
-# 3) Deploy Vault with auto-unseal
-##################################
+############################################################
+# 3) Deploy Vault via Helm (LoadBalancer service)
+############################################################
 resource "kubernetes_namespace" "vault_ns" {
   metadata {
     name = "vault"
@@ -142,7 +149,7 @@ resource "helm_release" "vault" {
   version          = "0.23.0"
   create_namespace = false
 
-  # Ensure vault-values.yaml sets: server.service.type = "LoadBalancer"
+  # See vault-values.yaml with service.type=LoadBalancer, etc.
   values = [
     file("${path.module}/vault-values.yaml")
   ]
@@ -155,9 +162,20 @@ resource "helm_release" "vault" {
   wait    = true
 }
 
-##################################
-# 4) Auto-Init Vault & Configure DB Secrets (no K8S auth config)
-##################################
+############################################################
+# 4) Secret Manager - we'll store the stable root token
+############################################################
+resource "google_secret_manager_secret" "root_token_secret" {
+  name    = "vault-root-token"
+  project = var.gcp_project
+  replication {
+    automatic = true
+  }
+}
+
+############################################################
+# 5) Vault auto-init & DB Secrets config
+############################################################
 resource "random_password" "vault_root_token" {
   length  = 32
   special = true
@@ -169,71 +187,97 @@ data "google_sql_database_instance" "existing_db" {
 }
 
 resource "null_resource" "vault_init_and_config" {
-  depends_on = [helm_release.vault]
+  depends_on = [
+    helm_release.vault,
+    google_secret_manager_secret.root_token_secret
+  ]
 
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
-    command = <<-EOF
+    command = <<-SCRIPT
       #!/usr/bin/env bash
       set -euo pipefail
 
-      echo "Waiting for Vault LoadBalancer external IP..."
+      SECRET_NAME="vault-root-token"
+      GCP_PROJECT="${var.gcp_project}"
+
+      echo "[Vault-Init] Checking for external LB IP..."
       EXTERNAL_IP=""
       for i in {1..30}; do
         EXTERNAL_IP=$(kubectl get svc vault -n vault -o jsonpath="{.status.loadBalancer.ingress[0].ip}" || true)
         if [ -n "$EXTERNAL_IP" ]; then
-          echo "Vault is available at external IP: $EXTERNAL_IP"
+          echo "Vault LB IP: $EXTERNAL_IP"
           break
         else
-          echo "External IP not assigned yet, sleeping 10s..."
+          echo "No external IP yet. Sleep 10..."
           sleep 10
         fi
       done
 
       if [ -z "$EXTERNAL_IP" ]; then
-        echo "Vault external IP not assigned, aborting"
+        echo "ERROR: No external IP for Vault LB."
         exit 1
       fi
 
       export VAULT_ADDR="http://$EXTERNAL_IP:8200"
-      echo "Using VAULT_ADDR=$VAULT_ADDR"
+      echo "[Vault-Init] VAULT_ADDR=$VAULT_ADDR"
 
-      echo "Waiting for Vault to become available..."
+      # Wait for readiness
       RETRY=0
       until curl -s $VAULT_ADDR/v1/sys/health; do
-        echo "Vault not available, retrying in 5s..."
+        echo "Vault not ready, sleeping 5..."
         sleep 5
         RETRY=$((RETRY+1))
         if [ $RETRY -ge 6 ]; then
-          echo "Vault did not become available, aborting"
+          echo "ERROR: Vault never became ready."
           exit 1
         fi
       done
 
-      echo "Initializing Vault if not already initialized..."
+      # Attempt to read existing token from GSM
+      echo "[Vault-Init] Checking if Vault is already initialized..."
+      set +e
+      EX_SECRET=$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="$GCP_PROJECT" 2>/dev/null)
+      GOT_SECRET=$?
+      set -e
+
       if vault status -address=$VAULT_ADDR 2>/dev/null | grep -q 'Initialized.*true'; then
-        echo "Vault already initialized, skipping operator init."
+        echo "[Vault-Init] Vault is already initialized."
+        if [ $GOT_SECRET -eq 0 ] && [ -n "$EX_SECRET" ]; then
+          echo "[Vault-Init] Logging in with existing root token from GSM..."
+          vault login -address=$VAULT_ADDR "$EX_SECRET" || {
+            echo "ERROR: existing token from GSM is invalid. Exiting."
+            exit 1
+          }
+        else
+          echo "ERROR: Vault is init, but no stored token. Exiting."
+          exit 1
+        fi
       else
-        echo "Initializing Vault..."
+        echo "[Vault-Init] Vault not init. Doing operator init now..."
+
         INIT_OUT=$(vault operator init -key-shares=1 -key-threshold=1 -format=json -address=$VAULT_ADDR)
         UNSEAL_KEY=$(echo "$INIT_OUT" | jq -r .unseal_keys_b64[0])
         ROOT_TOKEN=$(echo "$INIT_OUT" | jq -r .root_token)
 
         vault operator unseal -address=$VAULT_ADDR "$UNSEAL_KEY"
-        echo "Vault unsealed."
-
         vault login -address=$VAULT_ADDR "$ROOT_TOKEN"
+
+        echo "[Vault-Init] Creating stable root token: ${random_password.vault_root_token.result}"
         vault token create -id="${random_password.vault_root_token.result}" -policy="root" -ttl=87600h -address=$VAULT_ADDR
+
+        echo "[Vault-Init] Logging in with stable root token..."
         vault login -address=$VAULT_ADDR "${random_password.vault_root_token.result}"
+
+        echo "[Vault-Init] Storing stable root token in GCP Secret Manager..."
+        echo -n "${random_password.vault_root_token.result}" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT"
       fi
 
-      # We do NOT configure K8S auth here, so no reference to /run/secrets
-
-      echo "Enabling database secrets engine..."
+      echo "[Vault-Init] Enable database secrets engine..."
       vault secrets enable -address=$VAULT_ADDR database || true
 
-      echo "Configuring database secrets engine..."
-      INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_name}" --project "${var.gcp_project}" --format 'value(connectionName)')
+      echo "[Vault-Init] Config DB secrets..."
+      INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_name}" --project "${var.gcp_project}" --format='value(connectionName)')
       DB_USER="root"
       DB_PASS="${var.db_root_password}"
 
@@ -249,8 +293,8 @@ resource "null_resource" "vault_init_and_config" {
         default_ttl="1h" \
         max_ttl="24h"
 
-      echo "Vault auto-init & DB config complete (K8S Auth is next in the job)."
-    EOF
+      echo "[Vault-Init] Done! The stable root token is in Secret Manager now."
+    SCRIPT
   }
 }
 
@@ -262,7 +306,7 @@ output "cluster_name" {
 }
 
 output "vault_root_token" {
-  description = "The random Vault root token that we set"
+  description = "Random stable root token we assign"
   value       = random_password.vault_root_token.result
   sensitive   = true
 }
