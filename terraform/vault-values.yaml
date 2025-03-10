@@ -1,37 +1,21 @@
 server:
-  standalone:
-    enabled: true
-    config: |
-      disable_mlock = true
-      ui = true
-
-      listener "tcp" {
-        address     = "0.0.0.0:8200"
-        tls_disable = true
-      }
-
-      storage "file" {
-        path = "/vault/data"
-      }
-
-      seal "gcpckms" {
-        project     = "instsmini-auto"
-        region      = "us-central1"
-        key_ring    = "vault-ha-keyring"
-        crypto_key  = "vault-auto-unseal"
-      }
-
+  config: |
+    ui = true
+    listener "tcp" {
+      address     = "0.0.0.0:8200"
+      tls_disable = true
+    }
+    storage "file" {
+      path = "/vault/data"
+    }
+    seal "gcpckms" {
+      project     = "instsmini-auto"
+      region      = "us-central1"
+      key_ring    = "vault-ha-keyring"
+      crypto_key  = "vault-auto-unseal"
+    }
   service:
     type: LoadBalancer
-    annotations:
-      cloud.google.com/load-balancer-type: "External"
-    loadBalancerIP: "34.58.54.154"
-
-  dataStorage:
-    enabled: true
-    storageClass: "standard"
-    accessMode: ReadWriteOnce
-    size: 10Gi
 
   extraEnvironmentVars:
     GOOGLE_APPLICATION_CREDENTIALS: "/etc/vault/key.json"
@@ -46,5 +30,5 @@ server:
       mountPath: /etc/vault
       readOnly: true
 
-  injector:
-    enabled: true
+  injector: 
+    enabled: true 

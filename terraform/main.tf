@@ -167,16 +167,12 @@ resource "helm_release" "vault" {
 # 4) Create Secret in GCP Secret Manager for stable root token
 ############################################################
 
-# IMPORTANT CHANGE: Make the Terraform-created secret
-# have the exact same name used by the local-exec script:
-# "vault-${var.kms_crypto_key}-token"
+# Ensure the secret name matches what the local-exec script expects:
 resource "google_secret_manager_secret" "root_token_secret" {
   secret_id = "vault-${var.kms_crypto_key}-token"
   project   = var.gcp_project
 
   replication {
-    # 'automatic = true' is deprecated, but with ~>4.0 we can still use it
-    # If you see warnings, you can ignore them or upgrade the provider
     automatic = true
   }
 }
@@ -295,8 +291,7 @@ resource "null_resource" "vault_init_and_config" {
         plugin_name="mysql-legacy-database-plugin" \
         connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME:3306"')/' \
         username="$DB_USER" \
-        password="$DB_PASS" \
-        allowed_roles="my-app-role"
+        password="$DB_PASS"
 
       vault write database/roles/my-app-role \
         db_name="my-sql-db" \
