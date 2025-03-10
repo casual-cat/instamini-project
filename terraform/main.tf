@@ -89,11 +89,7 @@ resource "google_container_node_pool" "primary_nodes" {
     disk_size_gb = 50
     oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
     image_type   = "COS_CONTAINERD"
-
-    # If you run into the "At least one of ... must be specified" error,
-    # add one of these:
-    # image_type = "COS_CONTAINERD"
-    # node_version = "1.25.12-gke.2300"
+    node_version = "1.25.13-gke.300"
   }
 }
 
