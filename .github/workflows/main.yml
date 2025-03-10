@@ -82,21 +82,22 @@ jobs:
       - name: Configure kubectl
         run: |
           gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
-          kubectl config current-context  # Check if the correct context is set
-          kubectl get nodes  # Test the connection to the cluster
+          kubectl config current-context  # Check current context
+          kubectl get nodes             # Test connection
 
       ############################################################
       # 5) Create GitHub Authentication Secret for ArgoCD
       ############################################################
       - name: Create GitHub Authentication Secret
         run: |
+          kubectl delete secret argocd-repo-creds -n argocd --ignore-not-found=true
           kubectl create secret generic argocd-repo-creds \
             --from-literal=username=casual-cat \
             --from-literal=password=${{ secrets.GITHUB_TOKEN }} \
             -n argocd
 
       ############################################################
-      # 5) Terraform Import Keyring (Optional)
+      # 6) Terraform Import Keyring (Optional)
       ############################################################
       - name: Terraform Import Keyring
         run: |
@@ -108,7 +109,7 @@ jobs:
             || echo "KeyRing doesn't exist or already imported"
 
       ############################################################
-      # 6) Test Python App (Optional)
+      # 7) Test Python App (Optional)
       ############################################################
       - name: Test Python App
         env:
@@ -121,7 +122,7 @@ jobs:
           python3 -m unittest discover -s tests
 
       ############################################################
-      # 7A) Check if GKE cluster exists
+      # 8A) Check if GKE cluster exists
       ############################################################
       - name: Check if cluster exists
         id: clustercheck
@@ -134,7 +135,7 @@ jobs:
           fi
 
       ############################################################
-      # 7B) Conditionally create cluster+nodepool
+      # 8B) Conditionally create cluster+nodepool (if it doesn't exist)
       ############################################################
       - name: Terraform Apply (Create Cluster)
         if: steps.clustercheck.outputs.cluster_exists == 'false'
@@ -157,16 +158,22 @@ jobs:
             -auto-approve
 
       ############################################################
-      # 7C) Configure Kubeconfig
+      # 8C) Configure Kubeconfig (retry until the cluster is available)
       ############################################################
       - name: Configure Kubeconfig
         run: |
-          gcloud container clusters get-credentials vault-ha-cluster \
-            --zone ${{ secrets.GCP_ZONE }} \
-            --project ${{ secrets.GCP_PROJECT_ID }}
+          for i in {1..10}; do
+            if gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}; then
+              kubectl get nodes
+              break
+            else
+              echo "Cluster vault-ha-cluster not found, retrying in 30 seconds..."
+              sleep 30
+            fi
+          done
 
       ############################################################
-      # 7D) Terraform Apply (KMS + Vault + local-exec init)
+      # 9) Terraform Apply (KMS + Vault + local-exec init)
       ############################################################
       - name: Terraform Apply (KMS + Vault)
         env:
@@ -183,7 +190,7 @@ jobs:
           terraform apply -auto-approve
 
       ############################################################
-      # 8) Create MySQL Secret (for your app)
+      # 10) Create MySQL Secret (for your app)
       ############################################################
       - name: Create MySQL Secret
         run: |
@@ -197,7 +204,7 @@ jobs:
             --from-literal=MYSQL_DB=${{ secrets.MYSQL_DB }}
 
       ############################################################
-      # 9) Login to Docker Hub & Build/Push your image
+      # 11) Login to Docker Hub & Build/Push your image
       ############################################################
       - name: Login to DockerHub
         uses: docker/login-action@v2
@@ -215,16 +222,22 @@ jobs:
           platforms: linux/amd64
 
       ############################################################
-      # 10) Re-Configure kubectl
+      # 12) Re-Configure kubectl (retry again to be safe)
       ############################################################
       - name: Configure kubectl (again)
         run: |
-          gcloud container clusters get-credentials vault-ha-cluster \
-            --zone ${{ secrets.GCP_ZONE }} \
-            --project ${{ secrets.GCP_PROJECT_ID }}
+          for i in {1..10}; do
+            if gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}; then
+              kubectl get nodes
+              break
+            else
+              echo "Cluster vault-ha-cluster not found, retrying in 30 seconds..."
+              sleep 30
+            fi
+          done
 
       ############################################################
-      # 11) Install Argo CD & Create App
+      # 13) Install Argo CD & Create App
       ############################################################
       - name: Install Argo CD & Create App
         run: |
@@ -264,7 +277,7 @@ jobs:
           argocd app wait instamini --sync --health --timeout=300 --insecure --grpc-web
 
       ############################################################
-      # 12) Print External IP
+      # 14) Print External IP
       ############################################################
       - name: Print External IP
         run: |
