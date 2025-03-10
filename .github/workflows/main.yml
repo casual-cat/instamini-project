@@ -11,6 +11,7 @@ jobs:
   build-test-deploy:
     runs-on: ubuntu-latest
     env:
+      # Keep this so that gcloud & other tools can find your key file if needed:
       GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
 
     steps:
@@ -81,9 +82,15 @@ jobs:
       ############################################################
       - name: Configure kubectl
         run: |
-          gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
+          # Critical: enable the new GKE auth plugin
+          export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+
+          gcloud container clusters get-credentials vault-ha-cluster \
+            --zone ${{ secrets.GCP_ZONE }} \
+            --project ${{ secrets.GCP_PROJECT_ID }}
+
           kubectl config current-context  # Check current context
-          kubectl get nodes             # Test connection
+          kubectl get nodes              # Test connection
 
       ############################################################
       # 5) Create GitHub Authentication Secret for ArgoCD
@@ -105,7 +112,7 @@ jobs:
           terraform init -backend-config="bucket=tfstate-bucket-instamini" \
                          -backend-config="prefix=terraform/state"
           terraform import google_kms_key_ring.vault_ring \
-            projects/${{ secrets.GCP_PROJECT_ID }}/locations/${{ secrets.GCP_REGION }}/keyRings/${{ secrets.KMS_KEY_RING }} \
+            "projects/${{ secrets.GCP_PROJECT_ID }}/locations/${{ secrets.GCP_REGION }}/keyRings/${{ secrets.KMS_KEY_RING }}" \
             || echo "KeyRing doesn't exist or already imported"
 
       ############################################################
@@ -162,6 +169,7 @@ jobs:
       ############################################################
       - name: Configure Kubeconfig
         run: |
+          export USE_GKE_GCLOUD_AUTH_PLUGIN=True
           for i in {1..10}; do
             if gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}; then
               kubectl get nodes
@@ -194,6 +202,7 @@ jobs:
       ############################################################
       - name: Create MySQL Secret
         run: |
+          export USE_GKE_GCLOUD_AUTH_PLUGIN=True
           gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
           kubectl delete secret mysite-db-secrets -n default --ignore-not-found=true
           kubectl create secret generic mysite-db-secrets -n default \
@@ -222,10 +231,11 @@ jobs:
           platforms: linux/amd64
 
       ############################################################
-      # 12) Re-Configure kubectl (retry again to be safe)
+      # 12) Re-Configure kubectl (again)
       ############################################################
       - name: Configure kubectl (again)
         run: |
+          export USE_GKE_GCLOUD_AUTH_PLUGIN=True
           for i in {1..10}; do
             if gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}; then
               kubectl get nodes
