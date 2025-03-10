@@ -270,4 +270,3 @@ jobs:
           done
           echo "No external IP assigned after 10 tries."
           exit 1
-          #meow
