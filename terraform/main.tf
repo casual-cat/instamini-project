@@ -13,7 +13,7 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = "~> 4.0"
+      version = "~> 4.66"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
@@ -174,7 +174,7 @@ resource "google_secret_manager_secret" "root_token_secret" {
   project   = var.gcp_project
 
   replication {
-    auto = {}
+    automatic {}
   }
 }
 
