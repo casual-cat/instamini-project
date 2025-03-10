@@ -38,7 +38,6 @@ provider "google" {
   project = var.gcp_project
   region  = var.gcp_region
   zone    = var.gcp_zone
-  # Credentials come from GOOGLE_APPLICATION_CREDENTIALS or gcloud.
 }
 
 provider "kubernetes" {
@@ -64,7 +63,6 @@ data "google_client_config" "default" {}
 ############################################################
 # 1) GKE Cluster & Node Pool
 ############################################################
-
 resource "google_container_cluster" "primary" {
   name                     = "vault-ha-cluster"
   location                 = var.gcp_zone
@@ -92,7 +90,6 @@ resource "google_container_node_pool" "primary_nodes" {
     image_type   = "COS_CONTAINERD"
   }
 
-  # Ignores ephemeral changes
   lifecycle {
     ignore_changes = [
       node_config[0].resource_labels,
@@ -104,7 +101,6 @@ resource "google_container_node_pool" "primary_nodes" {
 ############################################################
 # 2) KMS Key Ring & Crypto Key
 ############################################################
-
 resource "google_kms_key_ring" "vault_ring" {
   name     = var.kms_key_ring
   project  = var.gcp_project
@@ -124,7 +120,6 @@ resource "google_kms_crypto_key" "vault_key" {
 ############################################################
 # 3) Deploy Vault with auto-unseal
 ############################################################
-
 resource "kubernetes_namespace" "vault_ns" {
   metadata {
     name = "vault"
@@ -141,8 +136,6 @@ resource "kubernetes_secret" "vault_gcp_key" {
   }
 }
 
-# Helm chart: ensure your `vault-values.yaml` sets:
-# server.service.type = "LoadBalancer"
 resource "helm_release" "vault" {
   name             = "vault"
   namespace        = kubernetes_namespace.vault_ns.metadata[0].name
@@ -166,8 +159,6 @@ resource "helm_release" "vault" {
 ############################################################
 # 4) Create Secret in GCP Secret Manager for stable root token
 ############################################################
-
-# Ensure the secret name matches what the local-exec script expects:
 resource "google_secret_manager_secret" "root_token_secret" {
   secret_id = "vault-${var.kms_crypto_key}-token"
   project   = var.gcp_project
@@ -180,7 +171,6 @@ resource "google_secret_manager_secret" "root_token_secret" {
 ############################################################
 # 5) Vault auto-init & store token in Secret Manager
 ############################################################
-
 resource "random_password" "vault_root_token" {
   length  = 32
   special = true
@@ -191,11 +181,20 @@ data "google_sql_database_instance" "existing_db" {
   project = var.gcp_project
 }
 
+# ------------------------------------------------------------------
+# IMPORTANT CHANGE: "triggers" block ensures re-run when vault chart changes
+# ------------------------------------------------------------------
 resource "null_resource" "vault_init_and_config" {
   depends_on = [
     helm_release.vault,
     google_secret_manager_secret.root_token_secret
   ]
+
+  # The line below ensures that if the Helm chart version changes,
+  # the null_resource is re-created and the local-exec runs again.
+  triggers = {
+    helm_chart_version = helm_release.vault.version
+  }
 
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
@@ -203,7 +202,6 @@ resource "null_resource" "vault_init_and_config" {
       #!/usr/bin/env bash
       set -euo pipefail
 
-      # Must match the 'secret_id' above:
       SECRET_NAME="vault-${var.kms_crypto_key}-token"
       GCP_PROJECT="${var.gcp_project}"
 
@@ -240,7 +238,6 @@ resource "null_resource" "vault_init_and_config" {
         fi
       done
 
-      # Attempt to retrieve existing token from Secret Manager
       echo "[Vault-Init] Checking if Vault is already init..."
       set +e
       EXISTING_TOKEN=$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="$GCP_PROJECT" 2>/dev/null)
@@ -307,7 +304,6 @@ resource "null_resource" "vault_init_and_config" {
 ############################################################
 # Outputs
 ############################################################
-
 output "cluster_name" {
   description = "Name of the GKE cluster"
   value       = google_container_cluster.primary.name
