@@ -21,17 +21,7 @@ jobs:
         uses: actions/checkout@v3
 
       ############################################################
-      # 2) Debug listing
-      ############################################################
-      - name: List repository
-        run: |
-          echo "Root directory:"
-          ls -la
-          echo "Terraform folder:"
-          ls -la terraform || true
-
-      ############################################################
-      # 3) Install Dependencies
+      # 2) Install Dependencies
       ############################################################
       - name: Install Dependencies
         run: |
@@ -78,13 +68,23 @@ jobs:
           pip3 install -r requirements.txt || true
 
       ############################################################
-      # 4) GCP Authentication
+      # 3) GCP Authentication
       ############################################################
       - name: GCP Auth
         run: |
           echo '${{ secrets.GCP_SA_KEY }}' | base64 --decode > $GITHUB_WORKSPACE/gcp-key.json
           gcloud auth activate-service-account --key-file=$GITHUB_WORKSPACE/gcp-key.json
           gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
+
+      ############################################################
+      # 4) Create GitHub Authentication Secret for ArgoCD
+      ############################################################
+      - name: Create GitHub Authentication Secret
+        run: |
+          kubectl create secret generic argocd-repo-creds \
+            --from-literal=username=casual-cat \
+            --from-literal=password=${{ secrets.GITHUB_TOKEN }} \
+            -n argocd
 
       ############################################################
       # 5) Terraform Import Keyring (Optional)
@@ -230,13 +230,14 @@ jobs:
           kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd
 
           ARGOCD_PW=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-          
+
           # Port-forward the ArgoCD service
           kubectl port-forward svc/argocd-server -n argocd 8080:443 &
-          sleep 5  # Allow some time for the port-forward to be set up
+          sleep 5  # Allow time for port-forward
 
           argocd login localhost:8080 --username admin --password "$ARGOCD_PW" --insecure --grpc-web
 
+          # Create Application with GitHub Authentication
           argocd app create instamini \
             --repo https://github.com/casual-cat/instamini-project.git \
             --path helm/instamini \
