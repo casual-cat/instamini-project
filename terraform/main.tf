@@ -106,6 +106,7 @@ resource "google_kms_key_ring" "vault_ring" {
   project  = var.gcp_project
   location = var.gcp_region
 
+  # If you want to ignore name changes, etc.:
   lifecycle {
     ignore_changes = [name, project, location]
   }
@@ -157,7 +158,7 @@ resource "helm_release" "vault" {
 }
 
 ############################################################
-# 4) Create Secret in GCP Secret Manager for stable root token
+# 4) Create Secret in GCP Secret Manager (for stable root token)
 ############################################################
 resource "google_secret_manager_secret" "root_token_secret" {
   secret_id = "vault-${var.kms_crypto_key}-token"
@@ -181,17 +182,13 @@ data "google_sql_database_instance" "existing_db" {
   project = var.gcp_project
 }
 
-# ------------------------------------------------------------------
-# IMPORTANT CHANGE: "triggers" block ensures re-run when vault chart changes
-# ------------------------------------------------------------------
 resource "null_resource" "vault_init_and_config" {
   depends_on = [
     helm_release.vault,
     google_secret_manager_secret.root_token_secret
   ]
 
-  # The line below ensures that if the Helm chart version changes,
-  # the null_resource is re-created and the local-exec runs again.
+  # Re-run if helm chart changes
   triggers = {
     helm_chart_version = helm_release.vault.version
   }
@@ -244,6 +241,7 @@ resource "null_resource" "vault_init_and_config" {
       TOKEN_STATUS=$?
       set -e
 
+      # If Vault is already initialized, just log in with the existing root token from GSM
       if vault status 2>/dev/null | grep -q 'Initialized.*true'; then
         echo "[Vault-Init] Vault is already initialized."
         if [ $TOKEN_STATUS -eq 0 ] && [ -n "$EXISTING_TOKEN" ]; then
@@ -284,11 +282,13 @@ resource "null_resource" "vault_init_and_config" {
       DB_USER="root"
       DB_PASS="${var.db_root_password}"
 
+      # Note the 'allowed_roles' to let my-app-role read credentials
       vault write database/config/my-sql-db \
         plugin_name="mysql-legacy-database-plugin" \
         connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME:3306"')/' \
         username="$DB_USER" \
-        password="$DB_PASS"
+        password="$DB_PASS" \
+        allowed_roles="my-app-role"
 
       vault write database/roles/my-app-role \
         db_name="my-sql-db" \

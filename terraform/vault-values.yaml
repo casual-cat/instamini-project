@@ -17,12 +17,11 @@ server:
       crypto_key  = "vault-auto-unseal"
     }
 
-  # Expose Vault externally (LoadBalancer), so Terraform’s null_resource script can find a public IP
+  # Expose Vault externally (LoadBalancer), so Terraform’s null_resource script can see a public IP
   service:
     type: LoadBalancer
 
-  # If your GCP credentials are loaded from a Secret named "gcp-key"
-  # and you want Vault to see GOOGLE_APPLICATION_CREDENTIALS
+  # Pass in the GCP credentials via environment variable
   extraEnvironmentVars:
     GOOGLE_APPLICATION_CREDENTIALS: "/etc/vault/key.json"
 
