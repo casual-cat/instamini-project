@@ -37,8 +37,42 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y apt-transport-https ca-certificates gnupg curl jq unzip python3-pip
-          # ... your other installations (Terraform, gcloud CLI, kubectl, helm, vault, etc.)
+
+          # Install Terraform using official setup-terraform GitHub Action
+          - name: Set up Terraform
+            uses: hashicorp/setup-terraform@v2
+            with:
+              terraform_version: 1.4.6
+
           terraform -version
+
+          # Install Google Cloud CLI
+          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee /etc/apt/sources.list.d/cloud-sdk.list
+          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
+          sudo apt-get update && sudo apt-get install -y google-cloud-cli
+
+          # kubectl
+          sudo apt-get install -y kubectl
+
+          # gke-gcloud-auth-plugin
+          sudo apt-get install -y google-cloud-sdk-gke-gcloud-auth-plugin
+
+          # helm
+          HELM_VERSION="v3.12.0"
+          curl -sSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o helm.tar.gz
+          tar xvf helm.tar.gz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+
+          # Vault CLI
+          VAULT_VERSION="1.14.2"
+          curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" -o vault.zip
+          unzip vault.zip
+          sudo mv vault /usr/local/bin/
+          vault version
+
+          # Python deps
+          pip3 install --upgrade pip
+          pip3 install -r requirements.txt || true
 
       ############################################################
       # 4) GCP Auth
@@ -50,7 +84,7 @@ jobs:
           gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
 
       ############################################################
-      # 5) Terraform Import KeyRing (Optional)
+      # 5) Terraform Import Keyring (Optional)
       ############################################################
       - name: Terraform Import Keyring
         run: |
@@ -118,15 +152,6 @@ jobs:
           gcloud container clusters get-credentials vault-ha-cluster \
             --zone ${{ secrets.GCP_ZONE }} \
             --project ${{ secrets.GCP_PROJECT_ID }}
-
-      ############################################################
-      # *OPTIONAL* (Approach #2) Force re-run the vault_init_and_config
-      ############################################################
-      # Uncomment this step if you want to ALWAYS re-run the local-exec script
-      # - name: Force re-run Vault Init
-      #   run: |
-      #     cd terraform
-      #     terraform taint null_resource.vault_init_and_config || echo "Nothing to taint"
 
       ############################################################
       # 7D) Terraform Apply (KMS + Vault + local-exec init)
