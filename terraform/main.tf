@@ -174,7 +174,7 @@ resource "google_secret_manager_secret" "root_token_secret" {
   project   = var.gcp_project
 
   replication {
-    automatic = {}
+    auto = {}
   }
 }
 
