@@ -167,9 +167,10 @@ resource "helm_release" "vault" {
 # 4) Create Secret in GCP Secret Manager for stable root token
 ############################################################
 
+# CHANGED: use secret_id instead of name
 resource "google_secret_manager_secret" "root_token_secret" {
-  name    = "vault-root-token"
-  project = var.gcp_project
+  secret_id = "vault-root-token"
+  project   = var.gcp_project
 
   replication {
     automatic = true
