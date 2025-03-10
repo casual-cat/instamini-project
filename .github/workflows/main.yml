@@ -2,16 +2,15 @@ name: DevOps Final Project
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 jobs:
   build-test-deploy:
     runs-on: ubuntu-latest
     env:
-      # This environment variable makes the service account key available for all steps.
       GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
 
     steps:
@@ -76,7 +75,6 @@ jobs:
       # 4) GCP Auth
       - name: GCP Auth
         run: |
-          # Write the service account key to a file in the workspace so it persists across steps.
           echo '${{ secrets.GCP_SA_KEY }}' | base64 --decode > $GITHUB_WORKSPACE/gcp-key.json
           gcloud auth activate-service-account --key-file=$GITHUB_WORKSPACE/gcp-key.json
           gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
@@ -88,7 +86,7 @@ jobs:
           terraform init -backend-config="bucket=tfstate-bucket-instamini" -backend-config="prefix=terraform/state"
           terraform import google_kms_key_ring.vault_ring projects/instsmini-auto/locations/us-central1/keyRings/vault-ha-keyring || echo "KeyRing already imported"
 
-      # 6) Test Python App
+      # 6) Test Python App (Optional)
       - name: Test Python App
         env:
           MYSQL_HOST: ${{ secrets.MYSQL_HOST }}
@@ -99,8 +97,10 @@ jobs:
         run: |
           python3 -m unittest discover -s tests
 
-      # 7) Terraform Init/Plan/Apply
-      - name: Terraform Init/Plan/Apply
+      ############################################################
+      # 7A) Terraform: Create Only the Cluster + Node Pool
+      ############################################################
+      - name: Terraform Apply (Create Cluster)
         env:
           TF_VAR_gcp_project: ${{ secrets.GCP_PROJECT_ID }}
           TF_VAR_gcp_region: ${{ secrets.GCP_REGION }}
@@ -113,7 +113,35 @@ jobs:
         run: |
           cd terraform
           terraform init -backend-config="bucket=tfstate-bucket-instamini" -backend-config="prefix=terraform/state"
-          terraform plan
+          terraform apply \
+            -target=google_container_cluster.primary \
+            -target=google_container_node_pool.primary_nodes \
+            -auto-approve
+
+      ############################################################
+      # 7B) Configure Kubeconfig after cluster creation
+      ############################################################
+      - name: Configure Kubeconfig
+        run: |
+          gcloud container clusters get-credentials vault-ha-cluster \
+            --zone ${{ secrets.GCP_ZONE }} \
+            --project ${{ secrets.GCP_PROJECT_ID }}
+
+      ############################################################
+      # 7C) Terraform: Deploy KMS, Vault, etc.
+      ############################################################
+      - name: Terraform Apply (KMS + Vault)
+        env:
+          TF_VAR_gcp_project: ${{ secrets.GCP_PROJECT_ID }}
+          TF_VAR_gcp_region: ${{ secrets.GCP_REGION }}
+          TF_VAR_gcp_zone: ${{ secrets.GCP_ZONE }}
+          TF_VAR_vault_gcp_sa_key_b64: ${{ secrets.VAULT_GCP_SA_KEY_B64 }}
+          TF_VAR_kms_key_ring: ${{ secrets.KMS_KEY_RING }}
+          TF_VAR_kms_crypto_key: ${{ secrets.KMS_CRYPTO_KEY }}
+          TF_VAR_cloud_sql_instance_name: ${{ secrets.CLOUD_SQL_INSTANCE_NAME }}
+          TF_VAR_db_root_password: ${{ secrets.DB_ROOT_PASSWORD }}
+        run: |
+          cd terraform
           terraform apply -auto-approve
 
       # 8) Create Kubernetes MySQL Secret
@@ -141,7 +169,7 @@ jobs:
           DOCKER_LOGIN_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKER_LOGIN_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-      # 10) Configure kubectl
+      # 10) Configure kubectl (again, just to be safe)
       - name: Configure kubectl
         run: |
           gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
@@ -152,18 +180,34 @@ jobs:
           kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
           kubectl rollout status deployment argocd-server -n argocd --timeout=300s
+
           curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
           chmod +x argocd
           sudo mv argocd /usr/local/bin/argocd
+
           kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd
+
           ARGOCD_PW=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+
           argocd login argocd-server.argocd.svc.cluster.local:443 --username admin --password "$ARGOCD_PW" --insecure --grpc-web
-          argocd app create instamini --repo https://github.com/casual-cat/instamini-project.git --path helm/instamini --dest-server https://kubernetes.default.svc --dest-namespace default --sync-policy automated --helm-set image.repository=${{ secrets.DOCKERHUB_USERNAME }}/instamini --helm-set image.tag=v3 --upsert --insecure --grpc-web
+
+          argocd app create instamini \
+            --repo https://github.com/casual-cat/instamini-project.git \
+            --path helm/instamini \
+            --dest-server https://kubernetes.default.svc \
+            --dest-namespace default \
+            --sync-policy automated \
+            --helm-set image.repository=${{ secrets.DOCKERHUB_USERNAME }}/instamini \
+            --helm-set image.tag=v3 \
+            --upsert \
+            --insecure \
+            --grpc-web
+
           argocd app wait instamini --operation --timeout=300 --insecure --grpc-web
           argocd app sync instamini --insecure --grpc-web
           argocd app wait instamini --sync --health --timeout=300 --insecure --grpc-web
 
-      # 12) Print External IP of Application
+      # 12) Print External IP
       - name: Print External IP
         run: |
           for i in {1..10}; do
