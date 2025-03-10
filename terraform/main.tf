@@ -167,13 +167,14 @@ resource "helm_release" "vault" {
 # 4) Create Secret in GCP Secret Manager for stable root token
 ############################################################
 
-# CHANGED: use secret_id instead of name
+# Previously used `automatic = true`, which is deprecated.
+# Now, we use `auto = {}` to avoid warnings.
 resource "google_secret_manager_secret" "root_token_secret" {
   secret_id = "vault-root-token"
   project   = var.gcp_project
 
   replication {
-    automatic = true
+    auto = {}
   }
 }
 
@@ -203,7 +204,7 @@ resource "null_resource" "vault_init_and_config" {
       #!/usr/bin/env bash
       set -euo pipefail
 
-      SECRET_NAME="vault-root-token"
+      SECRET_NAME="vault-${var.kms_crypto_key}-token"
       GCP_PROJECT="${var.gcp_project}"
 
       echo "[Vault-Init] Checking for external LB IP..."
@@ -282,13 +283,15 @@ resource "null_resource" "vault_init_and_config" {
       vault secrets enable database || true
 
       echo "[Vault-Init] Config DB secrets..."
-      INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_name}" --project "${var.gcp_project}" --format='value(connectionName)')
+
+      # Instead of connectionName, we pick the instance's first IP address (public).
+      INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_name}" --project "${var.gcp_project}" --format='value(ipAddresses[0].ipAddress)')
       DB_USER="root"
       DB_PASS="${var.db_root_password}"
 
       vault write database/config/my-sql-db \
         plugin_name="mysql-legacy-database-plugin" \
-        connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME"')/' \
+        connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME:3306"')/' \
         username="$DB_USER" \
         password="$DB_PASS"
 
