@@ -21,7 +21,6 @@ server:
         crypto_key  = "vault-auto-unseal"
       }
 
-  # The rest of your config remains at the same level:
   service:
     type: LoadBalancer
     annotations:
