@@ -26,15 +26,17 @@ variable "kms_crypto_key" {
 variable "vault_gcp_sa_key_b64" {
   type        = string
   description = "Base64-encoded JSON of your GCP SA for Vault auto-unseal"
+  default     = ""
 }
 
 variable "cloud_sql_instance_name" {
   type        = string
-  description = "socialdb"
+  default = "socialdb"
 }
 
 variable "db_root_password" {
   type        = string
   description = "Database root password"
   sensitive   = true
+  default     = ""
 }

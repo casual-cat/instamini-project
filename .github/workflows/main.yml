@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
+      TF_VAR_vault_gcp_sa_key_b64: ${{ secrets.vault_gcp_sa_key_b64 }}
+      TF_VAR_db_root_password: ${{ secrets.db_root_password }}
 
     steps:
       ############################################################
@@ -29,6 +31,7 @@ jobs:
           ls -la
           echo "Terraform folder:"
           ls -la terraform || true
+
       ############################################################
       # 3) Install Dependencies
       ############################################################
@@ -36,46 +39,52 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y apt-transport-https ca-certificates gnupg curl jq unzip python3-pip
-          # Install Terraform
-          TF_VERSION="1.4.6"
-          curl -sSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o terraform.zip
-          rm -rf tfbin
-          unzip -o terraform.zip -d tfbin
-          sudo mv tfbin/terraform /usr/local/bin/terraform
-          sudo chmod +x /usr/local/bin/terraform
-          export PATH="/usr/local/bin:$PATH"
-          rm -rf tfbin terraform.zip
+
+          # Install Terraform using the official setup-terraform GitHub Action
+          - name: Set up Terraform
+            uses: hashicorp/setup-terraform@v2
+            with:
+              terraform_version: 1.4.6
+
           terraform -version
+
           # Install Google Cloud CLI
           echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee /etc/apt/sources.list.d/cloud-sdk.list
           curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
           sudo apt-get update && sudo apt-get install -y google-cloud-cli
-          # Install kubectl
+
+          # kubectl
           sudo apt-get install -y kubectl
-          # Install gke-gcloud-auth-plugin
+
+          # gke-gcloud-auth-plugin
           sudo apt-get install -y google-cloud-sdk-gke-gcloud-auth-plugin
-          # Install helm
+
+          # helm
           HELM_VERSION="v3.12.0"
           curl -sSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o helm.tar.gz
           tar xvf helm.tar.gz
           sudo mv linux-amd64/helm /usr/local/bin/helm
-          # Install Vault CLI
+
+          # Vault CLI
           VAULT_VERSION="1.14.2"
           curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" -o vault.zip
           unzip vault.zip
           sudo mv vault /usr/local/bin/
           vault version
-          # Install Python dependencies
+
+          # Python deps
           pip3 install --upgrade pip
           pip3 install -r requirements.txt || true
+
       ############################################################
-      # 4) GCP Authentication
+      # 4) GCP Auth
       ############################################################
       - name: GCP Auth
         run: |
           echo '${{ secrets.GCP_SA_KEY }}' | base64 --decode > $GITHUB_WORKSPACE/gcp-key.json
           gcloud auth activate-service-account --key-file=$GITHUB_WORKSPACE/gcp-key.json
           gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
+
       ############################################################
       # 5) Terraform Import Keyring (Optional)
       ############################################################
@@ -87,6 +96,7 @@ jobs:
           terraform import google_kms_key_ring.vault_ring \
             projects/${{ secrets.GCP_PROJECT_ID }}/locations/${{ secrets.GCP_REGION }}/keyRings/${{ secrets.KMS_KEY_RING }} \
             || echo "KeyRing doesn't exist or already imported"
+
       ############################################################
       # 6) Test Python App (Optional)
       ############################################################
@@ -99,6 +109,7 @@ jobs:
           MYSQL_DB:   ${{ secrets.MYSQL_DB }}
         run: |
           python3 -m unittest discover -s tests
+
       ############################################################
       # 7A) Check if GKE cluster exists
       ############################################################
@@ -111,6 +122,7 @@ jobs:
           else
             echo "cluster_exists=false" >> $GITHUB_OUTPUT
           fi
+
       ############################################################
       # 7B) Conditionally create cluster+nodepool
       ############################################################
@@ -133,6 +145,7 @@ jobs:
             -target=google_container_cluster.primary \
             -target=google_container_node_pool.primary_nodes \
             -auto-approve
+
       ############################################################
       # 7C) Configure Kubeconfig
       ############################################################
@@ -141,6 +154,7 @@ jobs:
           gcloud container clusters get-credentials vault-ha-cluster \
             --zone ${{ secrets.GCP_ZONE }} \
             --project ${{ secrets.GCP_PROJECT_ID }}
+
       ############################################################
       # 7D) Terraform Apply (KMS + Vault + local-exec init)
       ############################################################
@@ -157,6 +171,7 @@ jobs:
         run: |
           cd terraform
           terraform apply -auto-approve
+
       ############################################################
       # 8) Create MySQL Secret (for your app)
       ############################################################
@@ -170,6 +185,7 @@ jobs:
             --from-literal=MYSQL_USER=${{ secrets.MYSQL_USER }} \
             --from-literal=MYSQL_PASS=${{ secrets.MYSQL_PASS }} \
             --from-literal=MYSQL_DB=${{ secrets.MYSQL_DB }}
+
       ############################################################
       # 9) Login to Docker Hub & Build/Push your image
       ############################################################
@@ -196,6 +212,7 @@ jobs:
           gcloud container clusters get-credentials vault-ha-cluster \
             --zone ${{ secrets.GCP_ZONE }} \
             --project ${{ secrets.GCP_PROJECT_ID }}
+
       ############################################################
       # 11) Install Argo CD & Create App
       ############################################################
@@ -204,15 +221,19 @@ jobs:
           kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
           kubectl rollout status deployment argocd-server -n argocd --timeout=300s
+
           curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
           chmod +x argocd
           sudo mv argocd /usr/local/bin/argocd
+
           kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd
+
           ARGOCD_PW=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
           argocd login argocd-server.argocd.svc.cluster.local:443 \
             --username admin \
             --password "$ARGOCD_PW" \
             --insecure --grpc-web
+
           argocd app create instamini \
             --repo https://github.com/casual-cat/instamini-project.git \
             --path helm/instamini \
@@ -224,9 +245,11 @@ jobs:
             --upsert \
             --insecure \
             --grpc-web
+
           argocd app wait instamini --operation --timeout=300 --insecure --grpc-web
           argocd app sync instamini --insecure --grpc-web
           argocd app wait instamini --sync --health --timeout=300 --insecure --grpc-web
+
       ############################################################
       # 12) Print External IP
       ############################################################
