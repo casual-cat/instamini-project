@@ -167,13 +167,16 @@ resource "helm_release" "vault" {
 # 4) Create Secret in GCP Secret Manager for stable root token
 ############################################################
 
-# Previously used `automatic = true`, which is deprecated.
-# Now, we use `auto = {}` to avoid warnings.
+# IMPORTANT CHANGE: Make the Terraform-created secret
+# have the exact same name used by the local-exec script:
+# "vault-${var.kms_crypto_key}-token"
 resource "google_secret_manager_secret" "root_token_secret" {
-  secret_id = "vault-root-token"
+  secret_id = "vault-${var.kms_crypto_key}-token"
   project   = var.gcp_project
 
   replication {
+    # 'automatic = true' is deprecated, but with ~>4.0 we can still use it
+    # If you see warnings, you can ignore them or upgrade the provider
     automatic = true
   }
 }
@@ -204,6 +207,7 @@ resource "null_resource" "vault_init_and_config" {
       #!/usr/bin/env bash
       set -euo pipefail
 
+      # Must match the 'secret_id' above:
       SECRET_NAME="vault-${var.kms_crypto_key}-token"
       GCP_PROJECT="${var.gcp_project}"
 
@@ -283,8 +287,6 @@ resource "null_resource" "vault_init_and_config" {
       vault secrets enable database || true
 
       echo "[Vault-Init] Config DB secrets..."
-
-      # Instead of connectionName, we pick the instance's first IP address (public).
       INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_name}" --project "${var.gcp_project}" --format='value(ipAddresses[0].ipAddress)')
       DB_USER="root"
       DB_PASS="${var.db_root_password}"
