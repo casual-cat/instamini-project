@@ -340,6 +340,11 @@ resource "kubernetes_job" "vault_init_job" {
     template {
       metadata {
       spec {
+        labels = {
+          job-name = "vault-init-job"
+        }
+      }
+      spec {
         service_account_name = "vault-admin-sa"
         restart_policy       = "Never"
         container {
