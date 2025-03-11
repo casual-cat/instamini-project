@@ -7,46 +7,47 @@ spec:
   backoffLimit: 0
   template:
     spec:
-      # The service account that has permission to create tokenreviews (if needed)
       serviceAccountName: vault-admin-sa
       restartPolicy: Never
       containers:
-      - name: vault-init
-        image: hashicorp/vault:1.14.2
-        command: ["/bin/sh", "-c"]
-        args:
-          - |
-            set -euo pipefail
-            echo "Running inside cluster. Configuring Vault Kubernetes auth..."
+        - name: vault-init
+          image: hashicorp/vault:1.14.2
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              echo "Running inside cluster. Configuring Vault Kubernetes auth..."
 
-            # 1) Use the cluster's internal service DNS for Vault
-            export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+              # 1) Use the cluster's internal service DNS for Vault
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
 
-            # 2) Enable the Kubernetes auth method (if not already)
-            vault auth enable kubernetes || true
+              # 2) Enable the Kubernetes auth method (if not already)
+              vault auth enable kubernetes || true
 
-            # 3) Configure Kubernetes auth using in-cluster credentials
-            vault write auth/kubernetes/config \
-              token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
-              kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
-              kubernetes_host="https://kubernetes.default.svc.cluster.local:443"
+              # 3) Configure Kubernetes auth using in-cluster credentials
+              vault write auth/kubernetes/config \
+                token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+                kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+                kubernetes_host="https://kubernetes.default.svc.cluster.local:443" \
+                disable_iss_validation=true   # CHANGED
 
-            echo "Kubernetes auth config done!"
+              echo "Kubernetes auth config done!"
 
-            # 4) Create a Vault policy that grants read on DB creds
-            cat <<EOF | vault policy write my-app-policy -
+              # 4) Create a Vault policy that grants read on DB creds
+              cat <<EOF | vault policy write my-app-policy -
 path "database/creds/instamini" {
   capabilities = ["read"]
 }
 EOF
 
-            echo "Policy 'my-app-policy' created!"
+              echo "Policy 'my-app-policy' created!"
 
-            # 5) Create a Vault role named 'instamini' bound to your service account 'my-app-sa' in 'default'
-            vault write auth/kubernetes/role/instamini \
-              bound_service_account_names="my-app-sa" \
-              bound_service_account_namespaces="default" \
-              policies="my-app-policy" \
-              ttl="24h"
+              # 5) Create a Vault role named 'instamini'
+              vault write auth/kubernetes/role/instamini \
+                bound_service_account_names="my-app-sa" \
+                bound_service_account_namespaces="default" \
+                policies="my-app-policy" \
+                ttl="24h"
 
-            echo "Vault role 'instamini' created! We are done."
+              echo "Vault role 'instamini' created! We are done."
+      ...
