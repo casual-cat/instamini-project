@@ -226,15 +226,17 @@ jobs:
             --project ${{ secrets.GCP_PROJECT_ID }}
 
       ############################################################
-      # 11) Install Argo CD & Create App (Port-forward fix)
+      # 11) Install Argo CD & Create App (LoadBalancer approach)
       ############################################################
       - name: Install Argo CD & Create App
         run: |
+          set -euo pipefail
+
           # 1) Create argocd namespace & install Argo CD
           kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 
-          # 2) Wait for argocd-server
+          # 2) Wait for the argocd-server Deployment to be rolled out
           kubectl rollout status deployment argocd-server -n argocd --timeout=300s
 
           # 3) Download Argo CD CLI
@@ -242,25 +244,37 @@ jobs:
           chmod +x argocd
           sudo mv argocd /usr/local/bin/argocd
 
-          # Wait for the deployment to be "available"
-          kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd
+          # 4) Patch argocd-server service to be a LoadBalancer
+          kubectl patch svc argocd-server -n argocd \
+            -p '{"spec": {"type": "LoadBalancer"}}'
 
-          # 4) Port-forward in background: 8080 -> argocd-server:443
-          kubectl port-forward -n argocd svc/argocd-server 8080:443 &
-          PORT_FORWARD_PID=$!
-          sleep 5
+          echo "Waiting up to 5 minutes for the argocd-server external IP..."
+          for i in {1..30}; do
+            EXTERNAL_IP=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || true)
+            if [ -n "$EXTERNAL_IP" ]; then
+              echo "Argo CD LB IP: $EXTERNAL_IP"
+              break
+            fi
+            sleep 10
+          done
 
-          # 5) Get initial admin password
-          ARGOCD_PW=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+          if [ -z "$EXTERNAL_IP" ]; then
+            echo "ERROR: Argo CD LB IP never appeared."
+            exit 1
+          fi
 
-          # 6) Argo CD CLI login via localhost:8080
-          argocd login localhost:8080 \
+          # 5) Get the initial admin password
+          ARGOCD_PW=$(kubectl -n argocd get secret argocd-initial-admin-secret \
+            -o jsonpath="{.data.password}" | base64 -d)
+
+          # 6) Argo CD CLI login via the new LoadBalancer IP
+          argocd login "$EXTERNAL_IP" \
             --username admin \
             --password "$ARGOCD_PW" \
             --insecure \
             --grpc-web
 
-          # If your GitHub repo is PRIVATE, add credentials:
+          # If your GitHub repo is PRIVATE, add credentials (optional):
           # argocd repo add https://github.com/casual-cat/instamini-project.git \
           #   --username $GITHUB_USER \
           #   --password $GITHUB_TOKEN \
@@ -283,9 +297,6 @@ jobs:
           argocd app wait instamini --operation --timeout=300 --insecure --grpc-web
           argocd app sync instamini --insecure --grpc-web
           argocd app wait instamini --sync --health --timeout=300 --insecure --grpc-web
-
-          # 9) Kill the port-forward
-          kill $PORT_FORWARD_PID
 
       ############################################################
       # 12) Print External IP

@@ -191,6 +191,7 @@ resource "null_resource" "vault_init_and_config" {
   # Re-run if helm chart changes
   triggers = {
     helm_chart_version = helm_release.vault.version
+    cluster_id         = google_container_cluster.primary.id
   }
 
   provisioner "local-exec" {
