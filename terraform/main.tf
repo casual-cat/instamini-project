@@ -288,9 +288,9 @@ resource "null_resource" "vault_init_and_config" {
         connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME:3306"')/' \
         username="$DB_USER" \
         password="$DB_PASS" \
-        allowed_roles="my-app-role"
+        allowed_roles="instamini"
 
-      vault write database/roles/my-app-role \
+      vault write database/roles/instamini \
         db_name="my-sql-db" \
         creation_statements="CREATE USER '{{name}}'@'%' IDENTIFIED BY '{{password}}'; GRANT ALL PRIVILEGES ON *.* TO '{{name}}'@'%';" \
         default_ttl="1h" \

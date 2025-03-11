@@ -14,5 +14,5 @@ service:
 vault:
   enabled: true
   addr: "http://vault.vault.svc.cluster.local:8200"
-  role: "my-app-role"
-  dbCredsPath: "database/creds/my-app-role"
+  role: "instamini"
+  dbCredsPath: "database/creds/instamini"

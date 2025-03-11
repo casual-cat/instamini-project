@@ -35,7 +35,7 @@ spec:
 
             # 4) Create a Vault policy that grants read on DB creds
             cat <<EOF | vault policy write my-app-policy -
-path "database/creds/my-app-role" {
+path "database/creds/instamini" {
   capabilities = ["read"]
 }
 EOF
