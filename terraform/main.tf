@@ -338,6 +338,7 @@ resource "kubernetes_job" "vault_init_job" {
   spec {
     backoff_limit = 0
     template {
+      metadata {
       spec {
         service_account_name = "vault-admin-sa"
         restart_policy       = "Never"
