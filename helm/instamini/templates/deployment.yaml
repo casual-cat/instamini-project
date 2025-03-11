@@ -23,10 +23,9 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - >
-              echo "Starting Flask with MySQL user=$MYSQL_USER pass=$MYSQL_PASS"
-              exec python app.py
+              echo "Starting Flask with MySQL user=$MYSQL_USER pass=$MYSQL_PASS";
+              python app.py
           env:
-            # Using static credentials from mysite-db-secrets
             - name: MYSQL_HOST
               valueFrom:
                 secretKeyRef:
