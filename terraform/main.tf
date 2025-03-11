@@ -2,6 +2,7 @@
 # main.tf
 # Deploys a GKE cluster, Vault with GCP KMS auto-unseal,
 # and stores/retrieves Vault root token in Secret Manager.
+# Also reads that token back from GSM into a K8S Secret.
 ##############################################################
 
 terraform {
@@ -106,7 +107,6 @@ resource "google_kms_key_ring" "vault_ring" {
   project  = var.gcp_project
   location = var.gcp_region
 
-  # If you want to ignore name changes, etc.:
   lifecycle {
     ignore_changes = [name, project, location]
   }
@@ -133,6 +133,7 @@ resource "kubernetes_secret" "vault_gcp_key" {
     namespace = kubernetes_namespace.vault_ns.metadata[0].name
   }
   data = {
+    # This is your GCP service account key JSON, base64-encoded
     "key.json" = var.vault_gcp_sa_key_b64
   }
 }
@@ -170,7 +171,7 @@ resource "google_secret_manager_secret" "root_token_secret" {
 }
 
 ############################################################
-# 5) Vault auto-init & store token in Secret Manager
+# 5) Random Root Token & local-exec Init
 ############################################################
 resource "random_password" "vault_root_token" {
   length  = 32
@@ -182,13 +183,13 @@ data "google_sql_database_instance" "existing_db" {
   project = var.gcp_project
 }
 
+# This sets up Vault, initializes it if needed, and stores the token in GSM
 resource "null_resource" "vault_init_and_config" {
   depends_on = [
     helm_release.vault,
     google_secret_manager_secret.root_token_secret
   ]
 
-  # Re-run if helm chart changes
   triggers = {
     helm_chart_version = helm_release.vault.version
     cluster_id         = google_container_cluster.primary.id
@@ -197,7 +198,6 @@ resource "null_resource" "vault_init_and_config" {
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
     command = <<-SCRIPT
-      #!/usr/bin/env bash
       set -euo pipefail
 
       SECRET_NAME="vault-${var.kms_crypto_key}-token"
@@ -242,7 +242,7 @@ resource "null_resource" "vault_init_and_config" {
       TOKEN_STATUS=$?
       set -e
 
-      # If Vault is already initialized, just log in with the existing root token from GSM
+      # If Vault is already initialized, just log in
       if vault status 2>/dev/null | grep -q 'Initialized.*true'; then
         echo "[Vault-Init] Vault is already initialized."
         if [ $TOKEN_STATUS -eq 0 ] && [ -n "$EXISTING_TOKEN" ]; then
@@ -283,7 +283,6 @@ resource "null_resource" "vault_init_and_config" {
       DB_USER="root"
       DB_PASS="${var.db_root_password}"
 
-      # Note the 'allowed_roles' to let my-app-role read credentials
       vault write database/config/my-sql-db \
         plugin_name="mysql-legacy-database-plugin" \
         connection_url='{{username}}:{{password}}@tcp('"$INSTANCE_CONN_NAME:3306"')/' \
@@ -300,6 +299,32 @@ resource "null_resource" "vault_init_and_config" {
       echo "[Vault-Init] Done. Root token now stored in Secret Manager."
     SCRIPT
   }
+}
+
+############################################################
+# Optional: Read stable token from GSM & create K8S secret
+# (If you want the token in-cluster for a vault-init-job)
+############################################################
+
+# 1) Data source to read the latest token from the same GSM secret
+data "google_secret_manager_secret_version" "vault_root_token_latest" {
+  project = var.gcp_project
+  secret  = google_secret_manager_secret.root_token_secret.secret_id
+  version = "latest"
+}
+
+# 2) Create K8S secret with that token
+resource "kubernetes_secret" "vault_root_token_secret" {
+  metadata {
+    name      = "vault-root-token"
+    namespace = "vault"
+  }
+  data = {
+    "token" = data.google_secret_manager_secret_version.vault_root_token_latest.secret_data
+  }
+  depends_on = [
+    google_container_node_pool.primary_nodes
+  ]
 }
 
 ############################################################
