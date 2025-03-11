@@ -33,5 +33,5 @@ server:
       mountPath: /etc/vault
       readOnly: true
 
-  injector:
-    enabled: true
+  # injector:
+  #   enabled: true

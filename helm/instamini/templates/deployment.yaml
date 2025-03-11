@@ -14,12 +14,12 @@ spec:
       labels:
         app: instamini
       {{- if .Values.vault.enabled }}
-      annotations:
-        vault.hashicorp.com/agent-inject: "true"
-        vault.hashicorp.com/agent-inject-vault-addr: "{{ .Values.vault.addr }}"
-        vault.hashicorp.com/role: "{{ .Values.vault.role }}"
-        vault.hashicorp.com/agent-inject-secret-dbcreds: "{{ .Values.vault.dbCredsPath }}"
-        vault.hashicorp.com/agent-inject-template-dbcreds: |
+      # annotations:
+      #   vault.hashicorp.com/agent-inject: "true"
+      #   vault.hashicorp.com/agent-inject-vault-addr: "{{ .Values.vault.addr }}"
+      #   vault.hashicorp.com/role: "{{ .Values.vault.role }}"
+      #   vault.hashicorp.com/agent-inject-secret-dbcreds: "{{ .Values.vault.dbCredsPath }}"
+      #   vault.hashicorp.com/agent-inject-template-dbcreds: |
           {{`{{- with secret "`}}{{ .Values.vault.dbCredsPath }}{{`" -}}`}}
           export MYSQL_USER="{{`{{ .Data.username }}`}}"
           export MYSQL_PASS="{{`{{ .Data.password }}`}}"
