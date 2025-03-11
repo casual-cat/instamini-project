@@ -328,6 +328,55 @@ resource "kubernetes_secret" "vault_root_token_secret" {
 }
 
 ############################################################
+# 6) Vault Init Kubernetes Job
+############################################################
+resource "kubernetes_job" "vault_init_job" {
+  metadata {
+    name      = "vault-init-job"
+    namespace = "vault"
+  }
+  spec {
+    backoff_limit = 0
+    template {
+      spec {
+        service_account_name = "vault-admin-sa"
+        restart_policy       = "Never"
+        container {
+          name  = "vault-init"
+          image = "hashicorp/vault:1.14.2"
+          command = ["/bin/sh", "-c"]
+          args = [
+            <<-EOT
+              set -euo pipefail
+              echo "Running inside cluster. Configuring Vault Kubernetes auth..."
+              export VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+              vault auth enable kubernetes || true
+              vault write auth/kubernetes/config \
+                token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+                kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+                kubernetes_host="https://kubernetes.default.svc.cluster.local:443"
+              echo "Kubernetes auth config done!"
+              cat <<EOF | vault policy write my-app-policy -
+              path "database/creds/instamini" {
+                capabilities = ["read"]
+              }
+              EOF
+              echo "Policy 'my-app-policy' created!"
+              vault write auth/kubernetes/role/instamini \
+                bound_service_account_names="my-app-sa" \
+                bound_service_account_namespaces="default" \
+                policies="my-app-policy" \
+                ttl="24h"
+              echo "Vault role 'instamini' created! We are done."
+            EOT
+          ]
+        }
+      }
+    }
+  }
+}
+
+############################################################
 # Outputs
 ############################################################
 output "cluster_name" {
