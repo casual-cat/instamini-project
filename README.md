@@ -1,284 +1,171 @@
-# DevOps Final Project: CI/CD with Terraform, Vault, Helm, Argo CD & GitHub Actions
+# DevOps Final Project: CI/CD Pipeline with Terraform, Vault, Helm, Argo CD & GitHub Actions
 # WELCOME TO INSTA-MINI!
+
+<div align="center">
+  <img src="https://user-images.githubusercontent.com/8144303/226272497-6eb8f4ed-2e21-45cf-bcae-d6834fd2a95e.png" width="60%" alt="DevOps Pipeline Diagram" />
+</div>
+
+<br />
 
 ## Overview
 
-This project automates:
+**Goal**: Demonstrate a full DevOps workflow for a Python-based application using:
+1. **GitHub Actions** – Automated CI/CD
+2. **Docker** – Containerization
+3. **Terraform** – Provisioning a GKE cluster
+4. **Vault** – Secrets management (auto-init & unseal via GCP KMS)
+5. **Helm** – Packaging K8s manifests
+6. **Argo CD** – GitOps-based deployment
 
-1. **Continuous Integration**: Build & test in GitHub Actions  
-2. **Continuous Deployment**: Deploy to GKE via Terraform, Helm, and Argo CD  
-3. **Vault Secrets**: Automatic Vault init/unseal with GCP KMS  
-4. **Docker**: Containerize and push to Docker Hub  
+<br />
+
+## Key Features
+
+- **Continuous Integration**:  
+  - Builds & tests your Python Flask app via GitHub Actions.
+  - Uses `unittest discover` to run tests under `tests/`.
+- **Continuous Deployment**:  
+  - Provisions/upgrades a GKE cluster and Vault using Terraform.
+  - Deploys your Dockerized app to the cluster using a Helm chart.
+  - Argo CD auto-syncs your Helm chart changes on every push.
+- **Vault**:  
+  - Automatically initialized and unsealed with GCP KMS.
+  - Vault root token stored in Google Secret Manager.
+  - (Optional) Configurable for dynamic or static DB credentials.
+- **Docker**:  
+  - Dockerfile packaging the Python app, pushed to Docker Hub.
+- **Secrets**:  
+  - All sensitive info stored securely in GitHub Secrets or K8s Secrets.
+
+<br />
 
 ## Repository Structure
 
 ```
-.github/workflows/ci-cd.yml      # GitHub Actions pipeline
-terraform/
-  main.tf, variables.tf, ...     # Terraform for GKE, Vault, GCP KMS
-  vault-values.yaml              # Vault Helm override
-  vault-admin-sa.yaml            # Vault service account
-  vault-init-job.yaml            # One-time job to configure Kubernetes auth
-helm/instamini/
-  Chart.yaml, values.yaml        # Helm chart for your Flask app
-  deployment.yaml, service.yaml  # K8s manifests for your app
-Dockerfile                       # Docker build for the Flask app
-requirements.txt                 # Python dependencies
-app.py, tests/                  # Flask application & tests
+.
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yml         # GitHub Actions pipeline
+├── docker-compose.yaml        # (Optional) for local dev, if any
+├── Dockerfile                 # Builds the Flask app container
+├── requirements.txt           # Python dependencies
+├── app.py                     # Main Flask application
+├── tests/                     # Python unit tests
+├── terraform/
+│   ├── main.tf                # GKE, Vault, Secret Manager configs
+│   ├── variables.tf
+│   ├── vault-values.yaml      # Helm values override for Vault
+│   ├── vault-init-job.yaml    # (Optional) to configure Vault K8s auth
+│   └── ...
+├── helm/
+│   └── instamini/
+│       ├── Chart.yaml         # Helm chart metadata
+│       ├── values.yaml        # Default chart values
+│       ├── deployment.yaml    # K8s Deployment for the Flask app
+│       ├── service.yaml       # K8s Service (LoadBalancer)
+│       └── ...
+└── README.md                  # This README
 ```
 
-## Key Steps
+<br />
 
-1. **GitHub Actions** (`ci-cd.yml`):  
-   - Installs Terraform, gcloud, helm, vault.  
-   - Provisions GKE, sets up Vault, builds & pushes Docker image.  
-   - Deploys via Argo CD automatically.  
+## CI/CD Workflow
 
-2. **Terraform** (`main.tf`, etc.):  
-   - Creates GKE cluster, Vault with GCP KMS.  
-   - Stores Vault Root Token in Secret Manager.  
-   - Configures Cloud SQL references.  
+1. **Push or PR** triggers `ci-cd.yml`:
+   - **Install** Terraform, gcloud, helm, vault CLI
+   - **Test** Python code with `python -m unittest`
+   - **Provision** or update GKE with Terraform
+   - **Init** & **auto-unseal** Vault with GCP KMS
+   - **Build & push** Docker image to Docker Hub
+   - **Install** Argo CD & create an Argo CD App pointing to `helm/instamini`
+2. **Argo CD** automatically syncs the Helm chart to your GKE cluster.
+3. **App** is accessible via a GCP LoadBalancer Service.
 
-3. **Vault**:  
-   - Auto-initialized/unsealed.  
-   - `vault-init-job.yaml` sets up Kubernetes auth (`disable_iss_validation=true` on GKE).  
+<br />
 
-4. **Helm + Argo CD**:  
-   - Helm chart in `helm/instamini/`.  
-   - Argo CD syncs your chart on every commit.  
+## Setup & Usage
 
-5. **MySQL**:  
-   - Credentials injected by Vault sidecar (dynamic) or fallback static secrets.  
+### 1. Prerequisites
+- **Google Cloud** project, GCP service account JSON base64-encoded
+- **GitHub Secrets**:
+  - `GCP_SA_KEY` (base64 of JSON)
+  - `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_ZONE`
+  - `CLOUD_SQL_INSTANCE_NAME`
+  - `VAULT_GCP_SA_KEY_B64`
+  - `DB_ROOT_PASSWORD`, `DB_ADMIN_PASSWORD`
+  - `DOCKERHUB_USERNAME`, `DOCKERHUB_PASSWORD`
+  - Optional: `MYSQL_HOST`, `MYSQL_USER`, `MYSQL_PASS`, etc.
+
+### 2. Local Testing
+```bash
+# 1) Build Docker locally
+docker build -t yourusername/instamini:v1 .
+
+# 2) Run container locally
+docker run -p 5001:5001 yourusername/instamini:v1
+
+# 3) Access http://localhost:5001
+```
+
+### 3. Deploy via GitHub Actions
+- **Push** to `main` branch.
+- Pipeline provisions or updates GKE, Vault, etc.
+- Argo CD automatically deploys your Helm chart.
+- Check logs for external IP of your app.
+
+<br />
+
+## Terraform & Vault
+
+- **Terraform** in `terraform/main.tf`:
+  - Creates GKE cluster
+  - Configures Vault with GCP KMS
+  - Stores the Vault root token in Secret Manager
+- **Vault** auto-initializes and unseals, ready to manage secrets if desired (static or dynamic).
+
+<br />
+
+## Helm & Argo CD
+
+- **Helm Chart** in `helm/instamini/`:
+  - `values.yaml` sets image repo/tag, service type, etc.
+  - `deployment.yaml` references environment variables from K8s secrets.
+- **Argo CD**:
+  - Installed by the pipeline
+  - Creates an app that watches your GitHub repo
+  - Syncs Helm changes automatically to the GKE cluster
+
+<br />
+
+## Security Considerations
+
+- **GitHub Secrets** store sensitive data (DB passwords, GCP keys).
+- **Kubernetes Secrets** store DB credentials in `mysite-db-secrets`.
+- **Vault** if you choose dynamic database credentials. Root token is in Google Secret Manager.
+- **.gitignore** & others help avoid committing secrets to git.
+
+<br />
+
+## Future Enhancements
+
+- **Monitoring**: Integrate Prometheus/Grafana for cluster/app metrics.
+- **Workload Identity**: Connect GKE -> Vault more securely (no manual keys).
+- **Cleanup**: Automated old Docker image cleanup or Helm chart revisions.
+
+<br />
+
+## Contributing
+
+1. **Fork** this repo & branch off `main`.
+2. **Commit** changes & create a pull request.
+3. CI/CD pipeline runs automatically on PR merges.
+
+<br />
+
+## License
+
+This project can be licensed under **MIT** or the license of your choice.
 
 ---
 
-## Final Code
-
-### 1) GitHub Actions: `.github/workflows/ci-cd.yml`
-<details>
-<summary>Click to show</summary>
-
-```yaml
-name: DevOps Final Project
-
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:
-
-jobs:
-  build-test-deploy:
-    runs-on: ubuntu-latest
-    env:
-      GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
-      TF_VAR_vault_gcp_sa_key_b64: ${{ secrets.VAULT_GCP_SA_KEY_B64 }}
-      TF_VAR_db_root_password: ${{ secrets.DB_ROOT_PASSWORD }}
-      TF_VAR_db_admin_password: ${{ secrets.DB_ADMIN_PASSWORD }}
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v3
-
-      - name: List repository
-        run: |
-          ls -la
-          ls -la terraform || true
-
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y apt-transport-https ca-certificates gnupg curl jq unzip python3-pip
-          # Terraform
-          TF_VERSION="1.4.6"
-          curl -sSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o terraform.zip
-          unzip -o terraform.zip -d tfbin
-          sudo mv tfbin/terraform /usr/local/bin/terraform
-          terraform -version
-
-          # GCloud CLI, kubectl, helm, vault CLI, python
-          ...
-          pip3 install -r requirements.txt || true
-
-      - name: GCP Auth
-        run: |
-          echo '${{ secrets.GCP_SA_KEY }}' | base64 --decode > $GITHUB_WORKSPACE/gcp-key.json
-          gcloud auth activate-service-account --key-file=$GITHUB_WORKSPACE/gcp-key.json
-          gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
-
-      - name: Terraform Import optional KMS resources
-        run: |
-          cd terraform
-          terraform init -backend-config="bucket=tfstate-bucket-instamini" -backend-config="prefix=terraform/state"
-          terraform import google_kms_key_ring.vault_ring "projects/${{ secrets.GCP_PROJECT_ID }}/locations/${{ secrets.GCP_REGION }}/keyRings/${{ secrets.KMS_KEY_RING }}" || true
-          terraform import google_kms_crypto_key.vault_key ...
-          terraform import google_secret_manager_secret.root_token_secret ...
-
-      - name: Test Python App
-        env:
-          MYSQL_HOST: ${{ secrets.MYSQL_HOST }}
-          MYSQL_PORT: ${{ secrets.MYSQL_PORT }}
-          MYSQL_USER: ${{ secrets.MYSQL_USER }}
-          MYSQL_PASS: ${{ secrets.MYSQL_PASS }}
-          MYSQL_DB:   ${{ secrets.MYSQL_DB }}
-        run: |
-          python3 -m unittest discover -s tests
-
-      - name: Check if cluster exists
-        id: clustercheck
-        run: |
-          EXISTING=$(gcloud container clusters list --filter="name=vault-ha-cluster" --format="value(name)" || true)
-          if [ "$EXISTING" == "vault-ha-cluster" ]; then
-            echo "cluster_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "cluster_exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Terraform Apply (Create Cluster)
-        if: steps.clustercheck.outputs.cluster_exists == 'false'
-        env:
-          TF_VAR_gcp_project: ${{ secrets.GCP_PROJECT_ID }}
-          ...
-        run: |
-          cd terraform
-          terraform apply -target=google_container_cluster.primary -target=google_container_node_pool.primary_nodes -auto-approve
-
-      - name: Configure Kubeconfig
-        run: |
-          gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
-
-      - name: Terraform Apply (KMS + Vault)
-        env:
-          TF_VAR_gcp_project: ${{ secrets.GCP_PROJECT_ID }}
-          ...
-        run: |
-          cd terraform
-          terraform apply -auto-approve
-
-      - name: Create MySQL Secret
-        run: |
-          gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
-          kubectl delete secret mysite-db-secrets -n default --ignore-not-found=true
-          kubectl create secret generic mysite-db-secrets -n default \
-            --from-literal=MYSQL_HOST=${{ secrets.MYSQL_HOST }} \
-            --from-literal=MYSQL_PORT=${{ secrets.MYSQL_PORT }} \
-            --from-literal=MYSQL_USER=${{ secrets.MYSQL_USER }} \
-            --from-literal=MYSQL_PASS=${{ secrets.MYSQL_PASS }} \
-            --from-literal=MYSQL_DB=${{ secrets.MYSQL_DB }}
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
-
-      - name: Docker Build & Push
-        uses: docker/build-push-action@v2
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/instamini:v3
-          platforms: linux/amd64
-
-      - name: Configure kubectl (again)
-        run: |
-          gcloud container clusters get-credentials vault-ha-cluster --zone ${{ secrets.GCP_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
-
-      - name: Install Argo CD & Create App
-        run: |
-          kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-          kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-          ...
-          argocd app create instamini \
-            --repo https://github.com/casual-cat/instamini-project.git \
-            --path helm/instamini \
-            ...
-            --helm-set image.repository=${{ secrets.DOCKERHUB_USERNAME }}/instamini \
-            --helm-set image.tag=v3 \
-            --upsert
-
-      - name: Print External IP
-        run: |
-          for i in {1..10}; do
-            EXTERNAL_IP=$(kubectl get svc instamini-mysite -n default -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            ...
-```
-</details>
-
-### 2) Terraform & Vault (short highlights)
-
-<details>
-<summary>Click to show <code>main.tf</code> & <code>vault-init-job.yaml</code></summary>
-
-```hcl
-# main.tf
-resource "google_container_cluster" "primary" { ... }
-resource "google_container_node_pool" "primary_nodes" { ... }
-
-resource "helm_release" "vault" {
-  chart = "vault"
-  values = [ file("${path.module}/vault-values.yaml") ]
-  ...
-}
-
-resource "null_resource" "vault_init_and_config" {
-  provisioner "local-exec" {
-    command = <<-EOT
-      # 1) Wait for Vault LB
-      # 2) operator init (if not already done)
-      # 3) store root token in Secret Manager
-      # 4) enable database secrets & config
-      ...
-    EOT
-  }
-}
-
-# vault-init-job.yaml
-vault write auth/kubernetes/config \
-  token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
-  kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
-  kubernetes_host="https://kubernetes.default.svc.cluster.local:443" \
-  disable_iss_validation=true  # GKE fix
-```
-</details>
-
-### 3) Helm Chart for App
-
-<details>
-<summary>Click to show short snippets</summary>
-
-```yaml
-# deployment.yaml (Helm)
-...
-annotations:
-  vault.hashicorp.com/agent-inject: "true"
-  vault.hashicorp.com/agent-inject-secret-dbcreds: "database/creds/instamini"
-...
-env:
-- name: MYSQL_HOST
-  valueFrom:
-    secretKeyRef:
-      name: mysite-db-secrets
-      key: MYSQL_HOST
-...
-```
-</details>
-
----
-
-## Usage
-
-- Set GitHub Secrets (`GCP_SA_KEY`, `GCP_PROJECT_ID`, `VAULT_GCP_SA_KEY_B64`, `DB_ROOT_PASSWORD`, `DB_ADMIN_PASSWORD`, `DOCKERHUB_USERNAME`, `DOCKERHUB_PASSWORD`, etc.).  
-- Commit & push to `main`.  
-- GitHub Actions runs Terraform, configures Vault, builds/pushes Docker, deploys via Argo CD.  
-- Check the Argo CD and app’s external IP from CI logs.  
-
-## Troubleshooting
-
-- **403 from Vault**: Ensure `disable_iss_validation=true` in the `vault-init-job.yaml`.  
-- **MySQL Access**: Confirm the user `db_admin` exists or rely on dynamic Vault creds.  
-- **Argo CD IP**: Wait a few minutes for LB provisioning.
-
-**Enjoy your fully automated pipeline!**
+**Enjoy your fully automated pipeline** from code to production! If you have any questions or suggestions, feel free to open an issue or pull request.
