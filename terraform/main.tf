@@ -145,6 +145,7 @@ resource "helm_release" "vault" {
   chart            = "vault"
   version          = "0.23.0"
   create_namespace = false
+  force_update = true
 
   values = [
     file("${path.module}/vault-values.yaml")
@@ -191,8 +192,7 @@ resource "null_resource" "vault_init_and_config" {
   ]
 
   triggers = {
-    helm_chart_version = helm_release.vault.version
-    cluster_id         = google_container_cluster.primary.id
+    always_run = timestamp()
   }
 
   provisioner "local-exec" {
