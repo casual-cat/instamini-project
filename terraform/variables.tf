@@ -40,3 +40,10 @@ variable "db_root_password" {
   sensitive   = true
   default     = ""
 }
+
+variable "db_admin_password" {
+  type        = string
+  description = "Db admin password"
+  sensitive   = true
+  default     = ""
+}

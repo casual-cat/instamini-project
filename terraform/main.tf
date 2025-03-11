@@ -280,8 +280,8 @@ resource "null_resource" "vault_init_and_config" {
 
       echo "[Vault-Init] Config DB secrets..."
       INSTANCE_CONN_NAME=$(gcloud sql instances describe "${var.cloud_sql_instance_name}" --project "${var.gcp_project}" --format='value(ipAddresses[0].ipAddress)')
-      DB_USER="root"
-      DB_PASS="${var.db_root_password}"
+      DB_USER="db_admin"
+      DB_PASS="${var.db_admin_password}"
 
       vault write database/config/my-sql-db \
         plugin_name="mysql-legacy-database-plugin" \
