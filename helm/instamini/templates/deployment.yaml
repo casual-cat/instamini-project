@@ -13,18 +13,6 @@ spec:
     metadata:
       labels:
         app: instamini
-      {{- if .Values.vault.enabled }}
-      # annotations:
-      #   vault.hashicorp.com/agent-inject: "true"
-      #   vault.hashicorp.com/agent-inject-vault-addr: "{{ .Values.vault.addr }}"
-      #   vault.hashicorp.com/role: "{{ .Values.vault.role }}"
-      #   vault.hashicorp.com/agent-inject-secret-dbcreds: "{{ .Values.vault.dbCredsPath }}"
-      #   vault.hashicorp.com/agent-inject-template-dbcreds: |
-          {{`{{- with secret "`}}{{ .Values.vault.dbCredsPath }}{{`" -}}`}}
-          export MYSQL_USER="{{`{{ .Data.username }}`}}"
-          export MYSQL_PASS="{{`{{ .Data.password }}`}}"
-          {{`{{- end }}`}}
-      {{- end }}
     spec:
       serviceAccountName: my-app-sa
       containers:
@@ -35,16 +23,10 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - >
-              echo "[Vault Injection] Sourcing dbcreds..."
-              if [ -f /vault/secrets/dbcreds ]; then
-                . /vault/secrets/dbcreds
-              else
-                echo "No dynamic Vault credentials found. Using static (if set)."
-              fi
               echo "Starting Flask with MySQL user=$MYSQL_USER pass=$MYSQL_PASS"
               exec python app.py
           env:
-            # If you still want fallback statics
+            # Using static credentials from mysite-db-secrets
             - name: MYSQL_HOST
               valueFrom:
                 secretKeyRef:

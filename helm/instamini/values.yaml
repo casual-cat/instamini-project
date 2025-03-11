@@ -12,7 +12,4 @@ service:
 
 # Vault injection - if you want dynamic DB credentials
 vault:
-  enabled: true
-  addr: "http://vault.vault.svc.cluster.local:8200"
-  role: "instamini"
-  dbCredsPath: "database/creds/instamini"
+  enabled: false
