@@ -1,4 +1,5 @@
 # DevOps Final Project: CI/CD with Terraform, Vault, Helm, Argo CD & GitHub Actions
+# WELCOME TO INSTA-MINI!
 
 ## Overview
 
