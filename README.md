@@ -99,7 +99,7 @@
 ### 2. Local Testing
 ```bash
 # 1) Build Docker locally
-'docker build -t yourusername/instamini:v1'
+"docker build -t yourusername/instamini:v1"
 
 # 2) Run container locally
 docker run -p 5001:5001 yourusername/instamini:v1
