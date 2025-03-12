@@ -99,10 +99,10 @@
 ### 2. Local Testing
 ```bash
 # 1) Build Docker locally
-docker build -t yourusername/instamini:v1
+docker build -t yourusername/instamini:v3
 
 # 2) Run container locally
-docker run -p 5001:5001 yourusername/instamini:v1
+docker run -p 5001:5001 yourusername/instamini:v3
 
 # 3) Access http://localhost:5001
 ```
@@ -149,7 +149,6 @@ docker run -p 5001:5001 yourusername/instamini:v1
 ## Future Enhancements
 
 - **Monitoring**: Integrate Prometheus/Grafana for cluster/app metrics.
-- **Workload Identity**: Connect GKE -> Vault more securely (no manual keys).
 - **Cleanup**: Automated old Docker image cleanup or Helm chart revisions.
 
 <br />
